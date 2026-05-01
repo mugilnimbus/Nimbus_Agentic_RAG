@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Nimbus Vector RAG</title>
+    <link rel="stylesheet" href="/styles.css?v=10">
+  </head>
+  <body>
+    <main class="app">
+      <aside class="sidebar" aria-label="Nimbus navigation">
+        <header class="brand">
+          <div class="mark" aria-hidden="true">N</div>
+          <div>
+            <h1>Nimbus</h1>
+            <p id="status">Connecting...</p>
+          </div>
+        </header>
+
+        <section class="ingest-card" aria-label="Add knowledge">
+          <div class="section-head">
+            <h2>Add Knowledge</h2>
+          </div>
+          <form id="ingestForm">
+            <label>
+              Document name
+              <input id="docName" type="text" placeholder="Project notes">
+            </label>
+            <label>
+              Upload file
+              <input id="docFile" type="file" accept=".txt,.md,.csv,.json,.log,.pdf,application/pdf,.png,.jpg,.jpeg,.webp,.gif,.bmp,image/*">
+            </label>
+            <label>
+              Paste text
+              <textarea id="docText" rows="6" placeholder="Paste notes, logs, specs, or article text"></textarea>
+            </label>
+            <label class="check-row">
+              <input id="distillUpload" type="checkbox">
+              Create Qdrant records after upload
+            </label>
+            <button class="primary" type="submit">Index</button>
+          </form>
+        </section>
+
+        <section class="db-section" aria-label="Databases">
+          <div class="section-head">
+            <h2>Databases</h2>
+            <button id="refreshDocs" class="ghost" type="button">Refresh</button>
+          </div>
+          <div id="dbList" class="db-list"></div>
+        </section>
+
+        <section class="ops-card" aria-label="Operations">
+          <div class="section-head">
+            <h2>Operations</h2>
+            <button id="refreshJobs" class="ghost" type="button">Jobs</button>
+          </div>
+          <div class="ops-actions">
+            <button id="rebuildNotes" class="ghost" type="button">Rebuild records</button>
+          </div>
+          <div id="jobList" class="job-list"></div>
+        </section>
+      </aside>
+
+      <section class="workspace" aria-label="RAG chat">
+        <header class="chat-topbar">
+          <div>
+            <h2>Ask Nimbus</h2>
+            <p>Qdrant records with SQLite raw fallback</p>
+          </div>
+          <div class="top-actions">
+            <button id="settingsToggle" class="ghost" type="button">Settings</button>
+            <div class="model-pill" id="modelPill">Local model</div>
+          </div>
+        </header>
+        <section id="settingsPanel" class="settings-panel" hidden>
+          <form id="settingsForm" class="settings-grid">
+            <label>
+              OpenAI endpoint
+              <input id="settingBaseUrl" type="text">
+            </label>
+            <label>
+              Chat model
+              <input id="settingModel" type="text">
+            </label>
+            <label>
+              Image extraction model
+              <input id="settingImageModel" type="text">
+            </label>
+            <label>
+              Embedding model
+              <input id="settingEmbeddingModel" type="text">
+            </label>
+            <label>
+              Vector backend
+              <select id="settingVectorBackend">
+                <option value="qdrant">Qdrant</option>
+              </select>
+            </label>
+            <label>
+              Qdrant URL
+              <input id="settingQdrantUrl" type="text" placeholder="http://127.0.0.1:6333">
+            </label>
+            <label>
+              Qdrant collection
+              <input id="settingQdrantCollection" type="text" placeholder="nimbus_chunks">
+            </label>
+            <label>
+              Record build concurrency
+              <input id="settingConcurrency" type="number" min="1" max="8">
+            </label>
+            <label>
+              Record group chunks
+              <input id="settingGroupChunks" type="number" min="1" max="100">
+            </label>
+            <label>
+              Record max tokens
+              <input id="settingMaxTokens" type="number" min="512" max="32000" step="256">
+            </label>
+            <label>
+              Extraction workers
+              <input id="settingExtractionWorkers" type="number" min="1" max="20">
+            </label>
+            <label class="check-row">
+              <input id="settingRerank" type="checkbox">
+              LLM reranking
+            </label>
+            <button class="primary" type="submit">Apply</button>
+          </form>
+        </section>
+        <div id="messages" class="messages"></div>
+        <form id="askForm" class="composer">
+          <input id="question" type="text" placeholder="Ask anything in your knowledge base" autocomplete="off">
+          <label>
+            Sources
+            <input id="topK" type="number" min="1" max="20" value="6">
+          </label>
+          <button class="primary" type="submit">Ask</button>
+        </form>
+      </section>
+    </main>
+
+    <div id="dbOverlay" class="overlay" hidden></div>
+    <aside id="dbDrawer" class="drawer" aria-label="Database documents" hidden>
+      <header class="drawer-head">
+        <div>
+          <p id="drawerKind" class="eyebrow">Database</p>
+          <h2 id="drawerTitle">Documents</h2>
+        </div>
+        <button id="closeDrawer" class="icon-button" type="button" aria-label="Close">×</button>
+      </header>
+      <div id="drawerDocs" class="drawer-body"></div>
+    </aside>
+
+    <script src="/app.js?v=13"></script>
+  </body>
+</html>
