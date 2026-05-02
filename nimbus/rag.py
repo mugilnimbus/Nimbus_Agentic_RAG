@@ -64,11 +64,15 @@ class VectorRAG:
         self.api_key = api_key
         self.vector_backend = vector_backend.strip().lower() or "qdrant"
         self.qdrant_url = qdrant_url.rstrip("/")
-        self.qdrant_collection = qdrant_collection.strip() or "nimbus_chunks"
-        self.notes_group_chunks = int(os.environ.get("AI_NOTES_GROUP_CHUNKS", "30"))
-        self.notes_max_tokens = int(os.environ.get("AI_NOTES_MAX_TOKENS", "12000"))
-        self.notes_concurrency = max(
-            1, min(8, int(os.environ.get("AI_NOTES_CONCURRENCY", "1")))
+        self.qdrant_collection = qdrant_collection.strip() or "nimbus_knowledge_base"
+        self.knowledge_group_chunks = int(os.environ.get("KNOWLEDGE_GROUP_CHUNKS", "30"))
+        self.knowledge_max_tokens = int(os.environ.get("KNOWLEDGE_MAX_TOKENS", "12000"))
+        self.knowledge_concurrency = max(
+            1,
+            min(
+                8,
+                int(os.environ.get("KNOWLEDGE_CONCURRENCY", "1")),
+            ),
         )
         self.prompt_version = os.environ.get("RAG_PROMPT_VERSION", "2026-04-27")
         self.rerank_enabled = os.environ.get("RAG_RERANK", "1") != "0"
@@ -103,14 +107,12 @@ class VectorRAG:
                     name TEXT NOT NULL,
                     created_at REAL NOT NULL,
                     chunk_count INTEGER NOT NULL DEFAULT 0,
-                    kind TEXT NOT NULL DEFAULT 'raw',
                     content_hash TEXT
                 )
                 """
             )
-            self._ensure_column(conn, "documents", "kind", "TEXT NOT NULL DEFAULT 'raw'")
             self._ensure_column(conn, "documents", "content_hash", "TEXT")
-            self._migrate_documents_to_raw_schema(conn)
+            self._migrate_documents_to_source_schema(conn)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS chunks (
@@ -123,7 +125,6 @@ class VectorRAG:
                 """
             )
             self._migrate_chunks_to_text_only(conn)
-            conn.execute("DELETE FROM documents WHERE COALESCE(kind, 'raw') <> 'raw'")
             conn.execute(
                 "DELETE FROM chunks WHERE document_id NOT IN (SELECT id FROM documents)"
             )
@@ -138,9 +139,7 @@ class VectorRAG:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id)"
             )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_documents_kind ON documents(kind)"
-            )
+            conn.execute("DROP INDEX IF EXISTS idx_documents_kind")
             conn.execute("DROP INDEX IF EXISTS idx_documents_source")
             conn.execute(
                 """
@@ -196,13 +195,14 @@ class VectorRAG:
         )
         conn.execute("DROP TABLE chunks_with_vectors_backup")
 
-    def _migrate_documents_to_raw_schema(self, conn: sqlite3.Connection) -> None:
+    def _migrate_documents_to_source_schema(self, conn: sqlite3.Connection) -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(documents)")}
-        legacy_columns = {"source_document_id", "embedding_model", "prompt_version"} & columns
+        legacy_columns = {"kind", "source_document_id", "embedding_model", "prompt_version"} & columns
         if not legacy_columns:
             return
+        conn.execute("DROP INDEX IF EXISTS idx_documents_kind")
         conn.execute("DROP INDEX IF EXISTS idx_documents_source")
-        for column in ("source_document_id", "embedding_model", "prompt_version"):
+        for column in ("kind", "source_document_id", "embedding_model", "prompt_version"):
             if column in legacy_columns:
                 conn.execute(f"ALTER TABLE documents DROP COLUMN {column}")
 
@@ -310,9 +310,9 @@ class VectorRAG:
             ]
         }
 
-    def _record_point_id(self, document_id: int, group_index: int, record_index: int, information: str) -> str:
-        digest = stable_hash(f"{document_id}:{group_index}:{record_index}:{information}")[:16]
-        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"nimbus:record:{document_id}:{group_index}:{record_index}:{digest}"))
+    def _knowledge_entry_point_id(self, document_id: int, group_index: int, entry_index: int, information: str) -> str:
+        digest = stable_hash(f"{document_id}:{group_index}:{entry_index}:{information}")[:16]
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"nimbus:knowledge:{document_id}:{group_index}:{entry_index}:{digest}"))
 
     def clear_qdrant_collection(self) -> None:
         if not self.qdrant_enabled():
@@ -324,7 +324,7 @@ class VectorRAG:
                 raise
         self._qdrant_ready_dims.clear()
 
-    def qdrant_records(self, limit: int = 200) -> list[dict]:
+    def knowledge_entries(self, limit: int = 200) -> list[dict]:
         if not self.qdrant_enabled():
             return []
         try:
@@ -342,68 +342,64 @@ class VectorRAG:
             if "HTTP 404" in str(exc):
                 return []
             raise
-        records = []
+        entries = []
         for item in (response.get("result") or {}).get("points", []):
             payload = item.get("payload") or {}
-            records.append(
+            entries.append(
                 {
                     "id": str(item.get("id") or ""),
                     "document_id": int(payload.get("document_id") or 0),
                     "document_name": str(payload.get("document_name") or "Unknown"),
-                    "document_kind": str(payload.get("kind") or "record"),
-                    "chunk_index": int(payload.get("chunk_index") or 0),
+                    "document_kind": "knowledge",
+                    "chunk_index": int(payload.get("source_chunk_start") or 0),
                     "source_chunk_start": int(payload.get("source_chunk_start") or 0),
                     "source_chunk_end": int(payload.get("source_chunk_end") or 0),
                     "source": str(payload.get("source") or ""),
                     "keywords": payload.get("keywords") or [],
                     "information": str(payload.get("information") or ""),
-                    "text": str(payload.get("text") or ""),
                     "vector_model": str(payload.get("vector_model") or ""),
                     "prompt_version": str(payload.get("prompt_version") or ""),
                 }
             )
-        records.sort(key=lambda item: (item["document_name"], item["source_chunk_start"], item["id"]))
-        return records
+        entries.sort(key=lambda item: (item["document_name"], item["source_chunk_start"], item["id"]))
+        return entries
 
-    def _upsert_qdrant_records(self, records: Sequence[dict]) -> int:
-        if not self.qdrant_enabled() or not records:
+    def _upsert_knowledge_entries(self, entries: Sequence[dict]) -> int:
+        if not self.qdrant_enabled() or not entries:
             return 0
         points = []
         vector_dim = 0
-        for record in records:
-            keywords = record.get("keywords") or []
+        for entry in entries:
+            keywords = entry.get("keywords") or []
             if isinstance(keywords, str):
                 keywords = [keywords]
             keywords = [normalize_text(str(keyword)) for keyword in keywords if normalize_text(str(keyword))]
-            information = normalize_text(str(record.get("information") or ""))
+            information = normalize_text(str(entry.get("information") or ""))
             if not information:
                 continue
-            source = normalize_text(str(record.get("source") or ""))
-            document_id = int(record["document_id"])
-            group_index = int(record.get("group_index") or 0)
-            record_index = int(record.get("record_index") or 0)
-            source_chunk_start = int(record.get("source_chunk_start") or 0)
-            source_chunk_end = int(record.get("source_chunk_end") or source_chunk_start)
-            document_name = str(record.get("document_name") or "Unknown")
+            source = normalize_text(str(entry.get("source") or ""))
+            document_id = int(entry["document_id"])
+            group_index = int(entry.get("group_index") or 0)
+            entry_index = int(entry.get("entry_index") or 0)
+            source_chunk_start = int(entry.get("source_chunk_start") or 0)
+            source_chunk_end = int(entry.get("source_chunk_end") or source_chunk_start)
+            document_name = str(entry.get("document_name") or "Unknown")
             vector_text = "Search keywords: " + ", ".join(keywords)
             vector = self.embed_text(vector_text if keywords else information)
             vector_dim = len(vector)
             points.append(
                 {
-                    "id": self._record_point_id(document_id, group_index, record_index, information),
+                    "id": self._knowledge_entry_point_id(document_id, group_index, entry_index, information),
                     "vector": list(vector),
                     "payload": {
-                        "kind": "record",
                         "document_id": document_id,
                         "document_name": document_name,
-                        "chunk_index": source_chunk_start,
-                        "record_index": record_index,
+                        "entry_index": entry_index,
                         "source_chunk_start": source_chunk_start,
                         "source_chunk_end": source_chunk_end,
                         "source": source,
                         "keywords": keywords,
                         "information": information,
-                        "text": information,
                         "vector_model": self.embedding_model,
                         "prompt_version": self.prompt_version,
                     },
@@ -439,12 +435,12 @@ class VectorRAG:
         name: str,
         text: str,
         max_words: int = 420,
-        kind: str = "raw",
+        kind: str = "source",
         english_only: bool = True,
         progress_callback=None,
     ) -> int:
-        if kind != "raw":
-            raise ValueError("SQLite stores raw source documents only. Distilled records belong in Qdrant.")
+        if kind != "source":
+            raise ValueError("Source Base stores source documents only. Knowledge Base entries belong in Qdrant.")
         source_text = normalize_text(text)
         clean_text = normalize_text(english_only_text(text)) if english_only else source_text
         if not clean_text and source_text:
@@ -455,23 +451,22 @@ class VectorRAG:
             raise ValueError("Document text is empty after English filtering.")
 
         pieces = chunk_text(clean_text, max_words=max_words)
-        content_hash = stable_hash(f"{kind}\n{name}\n{clean_text}")
+        content_hash = stable_hash(f"source\n{name}\n{clean_text}")
         if progress_callback:
-            progress_callback(len(pieces), len(pieces), f"Prepared {len(pieces)} raw chunks; saving to SQLite")
+            progress_callback(len(pieces), len(pieces), f"Prepared {len(pieces)} Source Base chunks; saving to SQLite")
 
         with self._connect() as conn:
             cur = conn.execute(
                 """
                 INSERT INTO documents (
-                    name, created_at, chunk_count, kind, content_hash
+                    name, created_at, chunk_count, content_hash
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?)
                 """,
                 (
                     name.strip() or "Untitled document",
                     time.time(),
                     len(pieces),
-                    kind,
                     content_hash,
                 ),
             )
@@ -485,22 +480,27 @@ class VectorRAG:
                     (document_id, idx, piece),
                 )
             if progress_callback:
-                progress_callback(len(pieces), len(pieces), f"Saved {len(pieces)} raw chunks")
+                progress_callback(len(pieces), len(pieces), f"Saved {len(pieces)} Source Base chunks")
 
         if progress_callback:
-            progress_callback(len(pieces), len(pieces), f"Indexed {len(pieces)} raw chunks in SQLite")
+            progress_callback(len(pieces), len(pieces), f"Indexed {len(pieces)} Source Base chunks in SQLite")
         return document_id
 
     def documents(self) -> list[dict]:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, name, created_at, chunk_count, kind, content_hash
+                SELECT id, name, created_at, chunk_count, content_hash
                 FROM documents
                 ORDER BY created_at DESC, id DESC
                 """
             ).fetchall()
-        return [dict(row) for row in rows]
+        documents = []
+        for row in rows:
+            item = dict(row)
+            item["kind"] = "source"
+            documents.append(item)
+        return documents
 
     def delete_document(self, document_id: int) -> None:
         try:
@@ -514,7 +514,7 @@ class VectorRAG:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, name, created_at, chunk_count, kind, content_hash
+                SELECT id, name, created_at, chunk_count, content_hash
                 FROM documents
                 WHERE id = ?
                 """,
@@ -522,14 +522,16 @@ class VectorRAG:
             ).fetchone()
         if row is None:
             raise ValueError("Document not found.")
-        return dict(row)
+        item = dict(row)
+        item["kind"] = "source"
+        return item
 
     def document_chunks(self, document_id: int) -> list[Chunk]:
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT chunks.id, chunks.document_id, documents.name AS document_name,
-                       documents.kind AS document_kind, chunks.chunk_index, chunks.text
+                       chunks.chunk_index, chunks.text
                 FROM chunks
                 JOIN documents ON documents.id = chunks.document_id
                 WHERE chunks.document_id = ?
@@ -544,17 +546,17 @@ class VectorRAG:
                 id=row["id"],
                 document_id=row["document_id"],
                 document_name=row["document_name"],
-                document_kind=row["document_kind"],
+                document_kind="source",
                 chunk_index=row["chunk_index"],
                 text=row["text"],
             )
             for row in rows
         ]
 
-    def distill_document(self, document_id: int, progress_callback=None) -> int:
+    def build_knowledge_for_document(self, document_id: int, progress_callback=None) -> int:
         source = self.document(document_id)
         source_chunks = self.document_chunks(document_id)
-        group_size = max(1, self.notes_group_chunks)
+        group_size = max(1, self.knowledge_group_chunks)
         groups = []
 
         for start in range(0, len(source_chunks), group_size):
@@ -565,12 +567,12 @@ class VectorRAG:
             )
             groups.append((start, chunk_label, chunk_text, group[0].chunk_index, group[-1].chunk_index))
 
-        distilled_by_index: dict[int, list[dict]] = {}
+        knowledge_by_index: dict[int, list[dict]] = {}
         total_groups = len(groups)
-        with ThreadPoolExecutor(max_workers=min(self.notes_concurrency, len(groups))) as pool:
+        with ThreadPoolExecutor(max_workers=min(self.knowledge_concurrency, len(groups))) as pool:
             futures = {
                 pool.submit(
-                    self.distill_chunk_group,
+                    self.build_knowledge_from_chunk_group,
                     source["name"],
                     chunk_label,
                     chunk_text,
@@ -579,73 +581,73 @@ class VectorRAG:
             }
             completed = 0
             if progress_callback:
-                progress_callback(0, total_groups, f"Distilling raw chunk group 0/{total_groups}")
+                progress_callback(0, total_groups, f"Building Knowledge Base group 0/{total_groups}")
             for future in as_completed(futures):
                 index, chunk_label, chunk_text, source_chunk_start, source_chunk_end = futures[future]
                 try:
-                    records = future.result()
+                    entries = future.result()
                 except Exception as exc:
-                    records = [
+                    entries = [
                         {
-                            "keywords": ["distillation failed", source["name"], chunk_label],
+                            "keywords": ["knowledge build failed", source["name"], chunk_label],
                             "information": (
-                                f"Distillation failed for {chunk_label}: {exc}. "
+                                f"Knowledge Base build failed for {chunk_label}: {exc}. "
                                 f"Extracted text needing review: {normalize_text(chunk_text)[:5000]}"
                             ),
                             "source": chunk_label,
                         }
                     ]
-                if not records:
-                    records = [
+                if not entries:
+                    entries = [
                         {
                             "keywords": ["extracted text needing review", source["name"], chunk_label],
                             "information": normalize_text(chunk_text)[:5000],
                             "source": chunk_label,
                         }
                     ]
-                for record in records:
-                    record["document_id"] = int(document_id)
-                    record["document_name"] = source["name"]
-                    record["group_index"] = int(index)
-                    record["source_chunk_start"] = int(source_chunk_start)
-                    record["source_chunk_end"] = int(source_chunk_end)
-                    record.setdefault("source", chunk_label)
-                distilled_by_index[index] = records
+                for entry in entries:
+                    entry["document_id"] = int(document_id)
+                    entry["document_name"] = source["name"]
+                    entry["group_index"] = int(index)
+                    entry["source_chunk_start"] = int(source_chunk_start)
+                    entry["source_chunk_end"] = int(source_chunk_end)
+                    entry.setdefault("source", chunk_label)
+                knowledge_by_index[index] = entries
                 completed += 1
                 if progress_callback:
-                    progress_callback(completed, total_groups, f"Distilled raw chunk group {completed}/{total_groups}")
+                    progress_callback(completed, total_groups, f"Built Knowledge Base group {completed}/{total_groups}")
 
-        qdrant_records = []
-        for index in sorted(distilled_by_index):
-            for record_index, record in enumerate(distilled_by_index[index], start=1):
-                record["record_index"] = record_index
-                qdrant_records.append(record)
+        knowledge_entries = []
+        for index in sorted(knowledge_by_index):
+            for entry_index, entry in enumerate(knowledge_by_index[index], start=1):
+                entry["entry_index"] = entry_index
+                knowledge_entries.append(entry)
 
-        if not qdrant_records:
-            raise ValueError("No distilled records were produced.")
+        if not knowledge_entries:
+            raise ValueError("No Knowledge Base entries were produced.")
 
         self._delete_qdrant_document(document_id)
         if progress_callback:
-            progress_callback(0, len(qdrant_records), f"Embedding distilled records for {source['name']}")
-        written = self._upsert_qdrant_records(qdrant_records)
+            progress_callback(0, len(knowledge_entries), f"Embedding Knowledge Base entries for {source['name']}")
+        written = self._upsert_knowledge_entries(knowledge_entries)
         if progress_callback:
-            progress_callback(written, len(qdrant_records), f"Stored {written} distilled records in Qdrant")
+            progress_callback(written, len(knowledge_entries), f"Stored {written} Knowledge Base entries")
         return written
 
-    def rebuild_records_for_all_raw_documents(self, progress_callback=None) -> list[int]:
+    def rebuild_knowledge_base_from_source_base(self, progress_callback=None) -> list[int]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id FROM documents WHERE kind = 'raw' ORDER BY created_at ASC, id ASC"
+                "SELECT id FROM documents ORDER BY created_at ASC, id ASC"
             ).fetchall()
         rebuilt = []
         total = len(rows)
         self.clear_qdrant_collection()
         for index, row in enumerate(rows, start=1):
             if progress_callback:
-                progress_callback(index - 1, total, f"Distilling raw document {index}/{total}")
-            rebuilt.append(self.distill_document(int(row["id"])))
+                progress_callback(index - 1, total, f"Building Knowledge Base for Source Base document {index}/{total}")
+            rebuilt.append(self.build_knowledge_for_document(int(row["id"])))
             if progress_callback:
-                progress_callback(index, total, f"Distilled raw document {index}/{total}")
+                progress_callback(index, total, f"Built Knowledge Base for Source Base document {index}/{total}")
         return rebuilt
 
     def create_job(self, job_type: str, detail: str = "") -> int:
@@ -713,39 +715,39 @@ class VectorRAG:
             jobs.append(item)
         return jobs
 
-    def distill_chunk_group(self, document_name: str, chunk_label: str, text: str) -> list[dict]:
+    def build_knowledge_from_chunk_group(self, document_name: str, chunk_label: str, text: str) -> list[dict]:
         messages = [
             {
                 "role": "system",
-                "content": prompts.DISTILL_SYSTEM_PROMPT,
+                "content": prompts.KNOWLEDGE_BUILD_SYSTEM_PROMPT,
             },
             {
                 "role": "user",
-                "content": prompts.DISTILL_USER_TEMPLATE.format(
+                "content": prompts.KNOWLEDGE_BUILD_USER_TEMPLATE.format(
                     document_name=document_name,
                     chunk_label=chunk_label,
                     text=text,
                 ),
             },
         ]
-        notes = self.chat(messages, max_tokens=self.notes_max_tokens).strip()
-        if notes.upper() == "NO_USEFUL_FACTS":
+        knowledge_json = self.chat(messages, max_tokens=self.knowledge_max_tokens).strip()
+        if knowledge_json.upper() == "NO_USEFUL_FACTS":
             return []
-        return parse_note_records(notes, default_source=chunk_label)
+        return parse_knowledge_entries(knowledge_json, default_source=chunk_label)
 
-    def extract_image_notes(self, document_name: str, image_data: str, mime_type: str) -> str:
+    def extract_image_source_text(self, document_name: str, image_data: str, mime_type: str) -> str:
         data_url = f"data:{mime_type};base64,{image_data}"
         messages = [
             {
                 "role": "system",
-                "content": prompts.IMAGE_NOTES_SYSTEM_PROMPT,
+                "content": prompts.IMAGE_SOURCE_SYSTEM_PROMPT,
             },
             {
                 "role": "user",
                 "content": [
                     {
                         "type": "text",
-                        "text": prompts.IMAGE_NOTES_USER_TEMPLATE.format(
+                        "text": prompts.IMAGE_SOURCE_USER_TEMPLATE.format(
                             document_name=document_name
                         ),
                     },
@@ -756,14 +758,14 @@ class VectorRAG:
                 ],
             },
         ]
-        notes = self.chat(
+        source_text = self.chat(
             messages,
-            max_tokens=self.notes_max_tokens,
+            max_tokens=self.knowledge_max_tokens,
             model=self.image_model,
         ).strip()
-        if not notes:
-            raise RuntimeError("Vision model returned empty image notes.")
-        return notes
+        if not source_text:
+            raise RuntimeError("Vision model returned empty image source text.")
+        return source_text
 
     def rewrite_query(self, question: str) -> str:
         messages = [
@@ -787,7 +789,7 @@ class VectorRAG:
         self._ensure_qdrant_collection(len(query_vector))
         query_tokens = set(tokens_for_scoring(query))
         limit = max(top_k * 4, 24)
-        search_filter = self._qdrant_filter(kind=kind, vector_model=self.embedding_model)
+        search_filter = self._qdrant_filter(vector_model=self.embedding_model)
         response = self._qdrant_request(
             "POST",
             f"/collections/{self.qdrant_collection}/points/search",
@@ -802,24 +804,23 @@ class VectorRAG:
         for item in response.get("result", []):
             payload = item.get("payload") or {}
             searchable_text = (
-                f"{payload.get('document_name', '')} {payload.get('kind', '')} "
-                f"{payload.get('text', '')}"
+                f"{payload.get('document_name', '')} knowledge "
+                f"{payload.get('information', '')}"
             )
             vector_score = float(item.get("score") or 0.0)
             lexical_score = token_overlap_score(query_tokens, searchable_text)
             exact_bonus = exact_match_bonus(query, searchable_text)
             score = (0.72 * vector_score) + (0.22 * lexical_score) + exact_bonus
-            if payload.get("kind") in {"record", "notes"}:
-                score *= 1.08
+            score *= 1.08
             if score > 0:
                 candidates.append(
                     Chunk(
                         id=str(item.get("id") or payload.get("chunk_id") or ""),
                         document_id=int(payload.get("document_id") or 0),
                         document_name=str(payload.get("document_name") or "Unknown"),
-                        document_kind=str(payload.get("kind") or "raw"),
-                        chunk_index=int(payload.get("chunk_index") or 0),
-                        text=str(payload.get("text") or ""),
+                        document_kind="knowledge",
+                        chunk_index=int(payload.get("source_chunk_start") or 0),
+                        text=str(payload.get("information") or ""),
                         score=score,
                     )
                 )
@@ -828,8 +829,7 @@ class VectorRAG:
 
     def search_sqlite(self, query: str, top_k: int = 6, kind: str | None = None) -> list[Chunk]:
         raise RuntimeError(
-            "SQLite stores raw chunk text only. Use Qdrant for vector search "
-            "or set VECTOR_BACKEND=qdrant."
+            "Source Base stores source chunk text only. Use the Knowledge Base for vector search."
         )
 
     def search_raw_sqlite(self, query: str, top_k: int = 6) -> list[Chunk]:
@@ -840,10 +840,9 @@ class VectorRAG:
             rows = conn.execute(
                 """
                 SELECT chunks.id, chunks.document_id, documents.name AS document_name,
-                       documents.kind AS document_kind, chunks.chunk_index, chunks.text
+                       chunks.chunk_index, chunks.text
                 FROM chunks
                 JOIN documents ON documents.id = chunks.document_id
-                WHERE documents.kind = 'raw'
                 """
             ).fetchall()
         hits = []
@@ -856,7 +855,7 @@ class VectorRAG:
                         id=row["id"],
                         document_id=row["document_id"],
                         document_name=row["document_name"],
-                        document_kind=row["document_kind"],
+                        document_kind="source",
                         chunk_index=row["chunk_index"],
                         text=row["text"],
                         score=score,
@@ -868,18 +867,18 @@ class VectorRAG:
     def answer(self, question: str, top_k: int = 6) -> dict:
         retrieval_query = self.rewrite_query(question)
         retrieval_k = max(top_k * 3, 12)
-        record_hits = merge_hits(
+        knowledge_hits = merge_hits(
             self.search(retrieval_query, top_k=retrieval_k),
             self.search(question, top_k=retrieval_k),
         )
         raw_hits = self.search_raw_sqlite(retrieval_query, top_k=max(4, top_k))
-        use_records = bool(record_hits) and record_hits[0].score >= 0.08
-        if use_records:
-            hits = merge_hits(record_hits[:retrieval_k], raw_hits[: max(4, top_k)])
-            search_mode = "qdrant-records-first"
+        use_knowledge = bool(knowledge_hits) and knowledge_hits[0].score >= 0.08
+        if use_knowledge:
+            hits = merge_hits(knowledge_hits[:retrieval_k], raw_hits[: max(4, top_k)])
+            search_mode = "knowledge-base-first"
         else:
             hits = raw_hits[:retrieval_k]
-            search_mode = "sqlite-raw-fallback"
+            search_mode = "source-base-fallback"
         hits = self.rerank_hits(question, hits, top_k) if hits else []
         context = format_context(hits)
         messages = [
@@ -1082,7 +1081,7 @@ def chunk_text(text: str, max_words: int = 260, overlap: int = 45) -> list[str]:
     return chunks
 
 
-def parse_note_records(text: str, default_source: str = "") -> list[dict]:
+def parse_knowledge_entries(text: str, default_source: str = "") -> list[dict]:
     raw = text.strip()
     if not raw:
         return []
@@ -1096,15 +1095,15 @@ def parse_note_records(text: str, default_source: str = "") -> list[dict]:
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        loose_records = loose_json_note_records(raw, default_source=default_source)
-        if loose_records:
-            return loose_records
-        return markdown_note_records(text, default_source=default_source)
+        loose_entries = loose_json_knowledge_entries(raw, default_source=default_source)
+        if loose_entries:
+            return loose_entries
+        return markdown_knowledge_entries(text, default_source=default_source)
     if isinstance(parsed, dict):
-        parsed = parsed.get("records") or parsed.get("items") or [parsed]
+        parsed = parsed.get("entries") or parsed.get("items") or [parsed]
     if not isinstance(parsed, list):
         return []
-    records = []
+    entries = []
     for item in parsed:
         if not isinstance(item, dict):
             continue
@@ -1122,7 +1121,7 @@ def parse_note_records(text: str, default_source: str = "") -> list[dict]:
         source = normalize_text(str(source))
         document = normalize_text(str(document))
         if information:
-            records.append(
+            entries.append(
                 {
                     "keywords": keywords[:40],
                     "information": information,
@@ -1130,11 +1129,11 @@ def parse_note_records(text: str, default_source: str = "") -> list[dict]:
                     "document": document,
                 }
             )
-    return records
+    return entries
 
 
-def loose_json_note_records(text: str, default_source: str = "") -> list[dict]:
-    records = []
+def loose_json_knowledge_entries(text: str, default_source: str = "") -> list[dict]:
+    entries = []
     depth = 0
     start = None
     in_string = False
@@ -1166,18 +1165,18 @@ def loose_json_note_records(text: str, default_source: str = "") -> list[dict]:
                         start = None
                         continue
                     if isinstance(parsed, dict):
-                        records.extend(
-                            parse_note_records(
+                        entries.extend(
+                            parse_knowledge_entries(
                                 json.dumps([parsed], ensure_ascii=True),
                                 default_source=default_source,
                             )
                         )
                     start = None
-    return records
+    return entries
 
 
-def markdown_note_records(text: str, default_source: str = "") -> list[dict]:
-    records = []
+def markdown_knowledge_entries(text: str, default_source: str = "") -> list[dict]:
+    entries = []
     blocks = re.split(r"\n(?=###\s+)", text)
     for block in blocks:
         lines = [line.strip() for line in block.splitlines() if line.strip()]
@@ -1202,8 +1201,8 @@ def markdown_note_records(text: str, default_source: str = "") -> list[dict]:
         if title:
             keywords.insert(0, title)
         if info:
-            records.append({"keywords": keywords[:40], "information": info, "source": source})
-    return records
+            entries.append({"keywords": keywords[:40], "information": info, "source": source})
+    return entries
 
 
 def tokens_for_scoring(text: str) -> list[str]:

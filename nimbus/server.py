@@ -1,6 +1,8 @@
 import json
 import os
 import threading
+import urllib.error
+import urllib.request
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -57,9 +59,9 @@ class RAGHandler(SimpleHTTPRequestHandler):
                     "model": RAG.model,
                     "image_model": RAG.image_model,
                     "embedding_model": RAG.embedding_model,
-                    "notes_concurrency": RAG.notes_concurrency,
-                    "notes_group_chunks": RAG.notes_group_chunks,
-                    "notes_max_tokens": RAG.notes_max_tokens,
+                    "knowledge_concurrency": RAG.knowledge_concurrency,
+                    "knowledge_group_chunks": RAG.knowledge_group_chunks,
+                    "knowledge_max_tokens": RAG.knowledge_max_tokens,
                     "rerank_enabled": RAG.rerank_enabled,
                     "vector_backend": RAG.vector_backend,
                     "qdrant": RAG.qdrant_status(),
@@ -70,13 +72,16 @@ class RAGHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/settings":
             self.send_json(settings_payload())
             return
+        if parsed.path == "/api/connections":
+            self.send_json(connection_status_payload())
+            return
         if parsed.path == "/api/documents":
             self.send_json({"documents": RAG.documents()})
             return
-        if parsed.path == "/api/records":
+        if parsed.path == "/api/knowledge":
             params = parse_qs(parsed.query)
             limit = int(params.get("limit", ["200"])[0])
-            self.send_json({"records": RAG.qdrant_records(limit=limit)})
+            self.send_json({"entries": RAG.knowledge_entries(limit=limit)})
             return
         if parsed.path == "/api/jobs":
             params = parse_qs(parsed.query)
@@ -149,12 +154,12 @@ class RAGHandler(SimpleHTTPRequestHandler):
                     HTTPStatus.ACCEPTED,
                 )
                 return
-            if parsed.path.startswith("/api/documents/") and parsed.path.endswith("/distill"):
+            if parsed.path.startswith("/api/documents/") and parsed.path.endswith("/build-knowledge"):
                 document_id = int(parsed.path.split("/")[-2])
                 job_id = JOBS.queue(
-                    "distill",
-                    f"Build Qdrant records for document {document_id}",
-                    distill_payload,
+                    "build-knowledge",
+                    f"Build Knowledge Base for document {document_id}",
+                    build_knowledge_payload,
                     document_id,
                 )
                 self.send_json({"ok": True, "queued": True, "job_id": job_id}, HTTPStatus.ACCEPTED)
@@ -168,11 +173,11 @@ class RAGHandler(SimpleHTTPRequestHandler):
                     return
                 self.send_json(RAG.answer(question, top_k=top_k))
                 return
-            if parsed.path == "/api/rebuild-records":
+            if parsed.path == "/api/rebuild-knowledge":
                 job_id = JOBS.queue(
-                    "rebuild-records",
-                    "Rebuild Qdrant records for all raw documents",
-                    rebuild_records_payload,
+                    "rebuild-knowledge",
+                    "Rebuild Knowledge Base from all Source Base documents",
+                    rebuild_knowledge_payload,
                     None,
                 )
                 self.send_json({"ok": True, "queued": True, "job_id": job_id}, HTTPStatus.ACCEPTED)
@@ -217,7 +222,7 @@ class RAGHandler(SimpleHTTPRequestHandler):
 
 def ingest_payload(payload: dict, job_id: int) -> dict:
     JOBS.update(job_id, "running", "Extracting text and preparing chunks")
-    text, kind, should_distill = document_text_from_payload(payload, RAG, EXTRACTION_WORKERS)
+    text, kind, should_build_knowledge = document_text_from_payload(payload, RAG, EXTRACTION_WORKERS)
     JOBS.update(job_id, "running", f"Indexing {kind} source")
     def progress(current, total, detail):
         JOBS.update(
@@ -229,15 +234,15 @@ def ingest_payload(payload: dict, job_id: int) -> dict:
         )
     name = str(payload.get("name") or "Pasted document")
     document_id = RAG.add_document(name, text, kind=kind, english_only=True, progress_callback=progress)
-    distilled_id = None
-    if should_distill:
-        JOBS.update(job_id, "running", "Building Qdrant records")
-        distilled_id = RAG.distill_document(document_id, progress_callback=progress)
-    return {"document_id": document_id, "distilled_document_id": distilled_id}
+    knowledge_count = None
+    if should_build_knowledge:
+        JOBS.update(job_id, "running", "Building Knowledge Base")
+        knowledge_count = RAG.build_knowledge_for_document(document_id, progress_callback=progress)
+    return {"document_id": document_id, "knowledge_entries": knowledge_count}
 
 
-def distill_payload(document_id: int, job_id: int) -> dict:
-    JOBS.update(job_id, "running", f"Distilling document {document_id} into Qdrant records")
+def build_knowledge_payload(document_id: int, job_id: int) -> dict:
+    JOBS.update(job_id, "running", f"Building Knowledge Base for document {document_id}")
     def progress(current, total, detail):
         JOBS.update(
             job_id,
@@ -246,12 +251,12 @@ def distill_payload(document_id: int, job_id: int) -> dict:
             progress_current=current,
             progress_total=total,
         )
-    record_count = RAG.distill_document(document_id, progress_callback=progress)
-    return {"document_id": document_id, "qdrant_records": record_count}
+    entry_count = RAG.build_knowledge_for_document(document_id, progress_callback=progress)
+    return {"document_id": document_id, "knowledge_entries": entry_count}
 
 
-def rebuild_records_payload(_arg, job_id: int) -> dict:
-    JOBS.update(job_id, "running", "Rebuilding Qdrant records from raw SQLite chunks")
+def rebuild_knowledge_payload(_arg, job_id: int) -> dict:
+    JOBS.update(job_id, "running", "Rebuilding Knowledge Base from Source Base chunks")
     def progress(current, total, detail):
         JOBS.update(
             job_id,
@@ -260,8 +265,8 @@ def rebuild_records_payload(_arg, job_id: int) -> dict:
             progress_current=current,
             progress_total=total,
         )
-    rebuilt = RAG.rebuild_records_for_all_raw_documents(progress_callback=progress)
-    return {"records_by_document": rebuilt, "qdrant_records": sum(rebuilt)}
+    rebuilt = RAG.rebuild_knowledge_base_from_source_base(progress_callback=progress)
+    return {"entries_by_document": rebuilt, "knowledge_entries": sum(rebuilt)}
 
 
 def settings_payload() -> dict:
@@ -270,15 +275,50 @@ def settings_payload() -> dict:
         "model": RAG.model,
         "image_model": RAG.image_model,
         "embedding_model": RAG.embedding_model,
-        "notes_concurrency": RAG.notes_concurrency,
-        "notes_group_chunks": RAG.notes_group_chunks,
-        "notes_max_tokens": RAG.notes_max_tokens,
+        "knowledge_concurrency": RAG.knowledge_concurrency,
+        "knowledge_group_chunks": RAG.knowledge_group_chunks,
+        "knowledge_max_tokens": RAG.knowledge_max_tokens,
         "extraction_workers": EXTRACTION_WORKERS,
         "rerank_enabled": RAG.rerank_enabled,
         "vector_backend": RAG.vector_backend,
         "qdrant_url": RAG.qdrant_url,
         "qdrant_collection": RAG.qdrant_collection,
         "qdrant": RAG.qdrant_status(),
+    }
+
+
+def connection_status_payload() -> dict:
+    return {
+        "llm": openai_compatible_status(),
+        "qdrant": RAG.qdrant_status(),
+    }
+
+
+def openai_compatible_status() -> dict:
+    request = urllib.request.Request(
+        f"{RAG.base_url.rstrip('/')}/models",
+        headers={"Authorization": f"Bearer {RAG.api_key}"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            payload = json.loads(response.read().decode("utf-8") or "{}")
+    except urllib.error.URLError as exc:
+        return {"status": "unavailable", "url": RAG.base_url, "error": str(exc)}
+    except (TimeoutError, json.JSONDecodeError) as exc:
+        return {"status": "unavailable", "url": RAG.base_url, "error": str(exc)}
+
+    models = payload.get("data") if isinstance(payload, dict) else []
+    model_ids = [
+        str(item.get("id"))
+        for item in models
+        if isinstance(item, dict) and item.get("id")
+    ]
+    return {
+        "status": "ready",
+        "url": RAG.base_url,
+        "models": model_ids[:12],
+        "model_count": len(model_ids),
     }
 
 
@@ -291,7 +331,7 @@ def update_settings(payload: dict) -> None:
         embedding_model = str(payload.get("embedding_model") or RAG.embedding_model).strip()
         vector_backend = str(payload.get("vector_backend") or RAG.vector_backend).strip().lower()
         if vector_backend != "qdrant":
-            raise ValueError("Vector backend must be qdrant. SQLite stores raw chunks only.")
+            raise ValueError("Vector backend must be qdrant. SQLite stores Source Base chunks only.")
         qdrant_url = str(payload.get("qdrant_url") or RAG.qdrant_url).strip()
         qdrant_collection = str(payload.get("qdrant_collection") or RAG.qdrant_collection).strip()
         os.environ["OPENAI_BASE_URL"] = base_url
@@ -301,14 +341,14 @@ def update_settings(payload: dict) -> None:
         os.environ["VECTOR_BACKEND"] = vector_backend
         os.environ["QDRANT_URL"] = qdrant_url
         os.environ["QDRANT_COLLECTION"] = qdrant_collection
-        os.environ["AI_NOTES_CONCURRENCY"] = str(
-            max(1, min(8, int(payload.get("notes_concurrency") or RAG.notes_concurrency)))
+        os.environ["KNOWLEDGE_CONCURRENCY"] = str(
+            max(1, min(8, int(payload.get("knowledge_concurrency") or RAG.knowledge_concurrency)))
         )
-        os.environ["AI_NOTES_GROUP_CHUNKS"] = str(
-            max(1, min(100, int(payload.get("notes_group_chunks") or RAG.notes_group_chunks)))
+        os.environ["KNOWLEDGE_GROUP_CHUNKS"] = str(
+            max(1, min(100, int(payload.get("knowledge_group_chunks") or RAG.knowledge_group_chunks)))
         )
-        os.environ["AI_NOTES_MAX_TOKENS"] = str(
-            max(512, min(32000, int(payload.get("notes_max_tokens") or RAG.notes_max_tokens)))
+        os.environ["KNOWLEDGE_MAX_TOKENS"] = str(
+            max(512, min(32000, int(payload.get("knowledge_max_tokens") or RAG.knowledge_max_tokens)))
         )
         EXTRACTION_WORKERS = max(
             1, min(20, int(payload.get("extraction_workers") or EXTRACTION_WORKERS))

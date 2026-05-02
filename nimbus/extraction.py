@@ -19,24 +19,24 @@ IMAGE_MIME_TYPES = {
 
 def document_text_from_payload(payload: dict, rag, extraction_workers: int) -> tuple[str, str, bool]:
     file_type = str(payload.get("file_type") or "text").lower()
-    should_distill = bool(payload.get("distill"))
+    should_build_knowledge = bool(payload.get("build_knowledge"))
     if file_type == "image":
         mime_type = str(payload.get("mime_type") or "").lower()
         if mime_type not in IMAGE_MIME_TYPES:
             raise ValueError("Unsupported image type.")
         encoded = str(payload.get("file_data") or "")
         validate_base64(encoded, "Image")
-        notes = rag.extract_image_notes(
+        source_text = rag.extract_image_source_text(
             str(payload.get("name") or "Uploaded image"),
             encoded,
             mime_type,
         )
-        return notes, "raw", True
+        return source_text, "source", True
 
     if file_type != "pdf":
-        return str(payload.get("text") or ""), "raw", should_distill
+        return str(payload.get("text") or ""), "source", should_build_knowledge
 
-    return extract_pdf_text(payload, extraction_workers), "raw", should_distill
+    return extract_pdf_text(payload, extraction_workers), "source", should_build_knowledge
 
 
 def extract_pdf_text(payload: dict, extraction_workers: int) -> str:

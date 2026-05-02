@@ -17,3 +17,6 @@ storage/
 snapshots/
 qdrant/
 .qdrant-initialized
+
+
+to_do.txt

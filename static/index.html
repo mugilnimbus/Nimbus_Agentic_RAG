@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Nimbus Vector RAG</title>
-    <link rel="stylesheet" href="/styles.css?v=10">
+    <link rel="stylesheet" href="/styles.css?v=14">
   </head>
   <body>
     <main class="app">
@@ -24,7 +24,7 @@
           <form id="ingestForm">
             <label>
               Document name
-              <input id="docName" type="text" placeholder="Project notes">
+              <input id="docName" type="text" placeholder="Project source">
             </label>
             <label>
               Upload file
@@ -32,11 +32,11 @@
             </label>
             <label>
               Paste text
-              <textarea id="docText" rows="6" placeholder="Paste notes, logs, specs, or article text"></textarea>
+              <textarea id="docText" rows="6" placeholder="Paste source text, logs, specs, or article text"></textarea>
             </label>
             <label class="check-row">
-              <input id="distillUpload" type="checkbox">
-              Create Qdrant records after upload
+              <input id="buildKnowledgeUpload" type="checkbox">
+              Build Knowledge Base after upload
             </label>
             <button class="primary" type="submit">Index</button>
           </form>
@@ -56,7 +56,7 @@
             <button id="refreshJobs" class="ghost" type="button">Jobs</button>
           </div>
           <div class="ops-actions">
-            <button id="rebuildNotes" class="ghost" type="button">Rebuild records</button>
+            <button id="rebuildKnowledge" class="ghost" type="button">Rebuild Knowledge Base</button>
           </div>
           <div id="jobList" class="job-list"></div>
         </section>
@@ -66,69 +66,190 @@
         <header class="chat-topbar">
           <div>
             <h2>Ask Nimbus</h2>
-            <p>Qdrant records with SQLite raw fallback</p>
+            <p>Knowledge Base with Source Base fallback</p>
           </div>
           <div class="top-actions">
+            <div class="view-switch" aria-label="Workspace view">
+              <button id="chatViewButton" class="view-button active" type="button">Chat</button>
+              <button id="knowledgeViewButton" class="view-button" type="button">Knowledge Base</button>
+              <button id="sourceViewButton" class="view-button" type="button">Source Documents</button>
+            </div>
             <button id="settingsToggle" class="ghost" type="button">Settings</button>
             <div class="model-pill" id="modelPill">Local model</div>
           </div>
         </header>
         <section id="settingsPanel" class="settings-panel" hidden>
-          <form id="settingsForm" class="settings-grid">
-            <label>
-              OpenAI endpoint
-              <input id="settingBaseUrl" type="text">
-            </label>
-            <label>
-              Chat model
-              <input id="settingModel" type="text">
-            </label>
-            <label>
-              Image extraction model
-              <input id="settingImageModel" type="text">
-            </label>
-            <label>
-              Embedding model
-              <input id="settingEmbeddingModel" type="text">
-            </label>
-            <label>
-              Vector backend
-              <select id="settingVectorBackend">
-                <option value="qdrant">Qdrant</option>
-              </select>
-            </label>
-            <label>
-              Qdrant URL
-              <input id="settingQdrantUrl" type="text" placeholder="http://127.0.0.1:6333">
-            </label>
-            <label>
-              Qdrant collection
-              <input id="settingQdrantCollection" type="text" placeholder="nimbus_chunks">
-            </label>
-            <label>
-              Record build concurrency
-              <input id="settingConcurrency" type="number" min="1" max="8">
-            </label>
-            <label>
-              Record group chunks
-              <input id="settingGroupChunks" type="number" min="1" max="100">
-            </label>
-            <label>
-              Record max tokens
-              <input id="settingMaxTokens" type="number" min="512" max="32000" step="256">
-            </label>
-            <label>
-              Extraction workers
-              <input id="settingExtractionWorkers" type="number" min="1" max="20">
-            </label>
-            <label class="check-row">
-              <input id="settingRerank" type="checkbox">
-              LLM reranking
-            </label>
-            <button class="primary" type="submit">Apply</button>
+          <form id="settingsForm" class="settings-shell">
+            <header class="settings-head">
+              <div>
+                <p class="eyebrow">Control Center</p>
+                <h2>Runtime Settings</h2>
+              </div>
+              <div class="settings-actions">
+                <button id="reloadSettings" class="ghost" type="button">Reload saved</button>
+                <button class="primary compact" type="submit">Apply changes</button>
+              </div>
+            </header>
+
+            <div class="settings-cards">
+              <section class="settings-card">
+                <div class="settings-card-head">
+                  <div>
+                    <h3>Local LLM</h3>
+                    <p>OpenAI-compatible LM Studio endpoint used for chat, vision, and extraction.</p>
+                  </div>
+                  <span id="llmStatus" class="status-chip muted">Not checked</span>
+                </div>
+                <div class="settings-fields two-col">
+                  <label>
+                    OpenAI endpoint
+                    <input id="settingBaseUrl" type="text">
+                    <small>Example: http://127.0.0.1:2134/v1</small>
+                  </label>
+                  <label>
+                    Chat model
+                    <input id="settingModel" type="text">
+                    <small>Used for answering, query rewriting, and knowledge building.</small>
+                  </label>
+                  <label>
+                    Image extraction model
+                    <input id="settingImageModel" type="text">
+                    <small>Can be the same model when your local model supports images.</small>
+                  </label>
+                  <label>
+                    Embedding model
+                    <input id="settingEmbeddingModel" type="text">
+                    <small>Must match the model used for existing Qdrant vectors.</small>
+                  </label>
+                </div>
+                <button id="checkLlm" class="ghost compact" type="button">Check local app</button>
+              </section>
+
+              <section class="settings-card">
+                <div class="settings-card-head">
+                  <div>
+                    <h3>Knowledge Store</h3>
+                    <p>Qdrant stores keyword vectors and compact knowledge entries.</p>
+                  </div>
+                  <span id="qdrantStatus" class="status-chip muted">Not checked</span>
+                </div>
+                <input id="settingVectorBackend" type="hidden" value="qdrant">
+                <div class="settings-fields two-col">
+                  <label>
+                    Qdrant URL
+                    <input id="settingQdrantUrl" type="text" placeholder="http://127.0.0.1:6333">
+                    <small>Dashboard usually runs at the same host and port under /dashboard.</small>
+                  </label>
+                  <label>
+                    Qdrant collection
+                    <input id="settingQdrantCollection" type="text" placeholder="nimbus_knowledge_base">
+                    <small>Changing this starts using a different Knowledge Base collection.</small>
+                  </label>
+                </div>
+                <button id="checkQdrant" class="ghost compact" type="button">Check Qdrant</button>
+              </section>
+
+              <section class="settings-card wide">
+                <div class="settings-card-head">
+                  <div>
+                    <h3>Processing</h3>
+                    <p>Controls for Source Base parsing and Knowledge Base generation.</p>
+                  </div>
+                </div>
+                <div class="settings-fields four-col">
+                  <label>
+                    Knowledge build concurrency
+                    <input id="settingConcurrency" type="number" min="1" max="8">
+                    <small>Keep 1 for local LLMs unless parallel generation is stable.</small>
+                  </label>
+                  <label>
+                    Knowledge group chunks
+                    <input id="settingGroupChunks" type="number" min="1" max="100">
+                    <small>How many consecutive source chunks go into one extraction prompt.</small>
+                  </label>
+                  <label>
+                    Knowledge max tokens
+                    <input id="settingMaxTokens" type="number" min="512" max="32000" step="256">
+                    <small>Maximum output budget for each knowledge extraction call.</small>
+                  </label>
+                  <label>
+                    Extraction workers
+                    <input id="settingExtractionWorkers" type="number" min="1" max="20">
+                    <small>CPU workers for file parsing, PDF extraction, cleaning, and chunking.</small>
+                  </label>
+                </div>
+                <label class="check-row setting-toggle">
+                  <input id="settingRerank" type="checkbox">
+                  <span>
+                    LLM reranking
+                    <small>Lets the chat model reorder retrieved entries before answering.</small>
+                  </span>
+                </label>
+              </section>
+            </div>
           </form>
         </section>
-        <div id="messages" class="messages"></div>
+        <section id="chatPage" class="workspace-page chat-page">
+          <div id="messages" class="messages"></div>
+        </section>
+        <section id="sourcePage" class="workspace-page source-page" hidden>
+          <header class="source-page-head">
+            <div>
+              <p class="eyebrow">Source Base</p>
+              <h2>SQLite Documents</h2>
+            </div>
+            <div class="source-tools">
+              <input id="sourceSearch" type="search" placeholder="Search documents">
+              <button id="sourceRefresh" class="ghost" type="button">Refresh</button>
+            </div>
+          </header>
+          <div class="source-stats" id="sourceStats"></div>
+          <div class="source-browser">
+            <section class="source-documents" aria-label="Source Base document list">
+              <div id="sourceDocumentList" class="source-document-list"></div>
+            </section>
+            <section class="source-reader" aria-label="Source document chunks">
+              <div id="sourceReader" class="source-reader-empty">
+                Select a document to read its chunks.
+              </div>
+            </section>
+          </div>
+        </section>
+        <section id="knowledgePage" class="workspace-page knowledge-page" hidden>
+          <header class="source-page-head">
+            <div>
+              <p class="eyebrow">Knowledge Base</p>
+              <h2>Qdrant Entries</h2>
+            </div>
+            <div class="source-tools">
+              <input id="knowledgeSearch" type="search" placeholder="Search documents, keywords, or information">
+              <button id="knowledgeRefresh" class="ghost" type="button">Refresh</button>
+            </div>
+          </header>
+          <div class="source-stats" id="knowledgeStats"></div>
+          <div class="knowledge-tabs" aria-label="Knowledge Base view mode">
+            <button id="knowledgeListMode" class="view-button active" type="button">List</button>
+            <button id="knowledgeGraphMode" class="view-button" type="button">Graph</button>
+          </div>
+          <div id="knowledgeListView" class="knowledge-browser">
+            <section class="source-documents" aria-label="Knowledge Base entry list">
+              <div id="knowledgeEntryList" class="source-document-list"></div>
+            </section>
+            <section class="source-reader" aria-label="Knowledge entry detail">
+              <div id="knowledgeReader" class="source-reader-empty">
+                Select a Knowledge Base entry to inspect it.
+              </div>
+            </section>
+          </div>
+          <div id="knowledgeGraphView" class="knowledge-graph-view" hidden>
+            <div class="knowledge-graph-shell">
+              <svg id="knowledgeGraph" class="knowledge-graph" role="img" aria-label="Knowledge graph"></svg>
+            </div>
+            <aside id="knowledgeGraphDetail" class="knowledge-graph-detail">
+              Select a graph node to inspect it.
+            </aside>
+          </div>
+        </section>
         <form id="askForm" class="composer">
           <input id="question" type="text" placeholder="Ask anything in your knowledge base" autocomplete="off">
           <label>
@@ -152,6 +273,6 @@
       <div id="drawerDocs" class="drawer-body"></div>
     </aside>
 
-    <script src="/app.js?v=13"></script>
+    <script src="/app.js?v=19"></script>
   </body>
 </html>

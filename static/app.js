@@ -4,15 +4,37 @@ const dbList = document.querySelector("#dbList");
 const ingestForm = document.querySelector("#ingestForm");
 const askForm = document.querySelector("#askForm");
 const messages = document.querySelector("#messages");
+const chatPage = document.querySelector("#chatPage");
+const sourcePage = document.querySelector("#sourcePage");
+const knowledgePage = document.querySelector("#knowledgePage");
+const chatViewButton = document.querySelector("#chatViewButton");
+const knowledgeViewButton = document.querySelector("#knowledgeViewButton");
+const sourceViewButton = document.querySelector("#sourceViewButton");
+const sourceSearchInput = document.querySelector("#sourceSearch");
+const sourceRefreshButton = document.querySelector("#sourceRefresh");
+const sourceStats = document.querySelector("#sourceStats");
+const sourceDocumentList = document.querySelector("#sourceDocumentList");
+const sourceReader = document.querySelector("#sourceReader");
+const knowledgeSearchInput = document.querySelector("#knowledgeSearch");
+const knowledgeRefreshButton = document.querySelector("#knowledgeRefresh");
+const knowledgeStats = document.querySelector("#knowledgeStats");
+const knowledgeListModeButton = document.querySelector("#knowledgeListMode");
+const knowledgeGraphModeButton = document.querySelector("#knowledgeGraphMode");
+const knowledgeListView = document.querySelector("#knowledgeListView");
+const knowledgeGraphView = document.querySelector("#knowledgeGraphView");
+const knowledgeEntryList = document.querySelector("#knowledgeEntryList");
+const knowledgeReader = document.querySelector("#knowledgeReader");
+const knowledgeGraph = document.querySelector("#knowledgeGraph");
+const knowledgeGraphDetail = document.querySelector("#knowledgeGraphDetail");
 const fileInput = document.querySelector("#docFile");
 const textInput = document.querySelector("#docText");
 const nameInput = document.querySelector("#docName");
 const questionInput = document.querySelector("#question");
 const topKInput = document.querySelector("#topK");
-const distillUploadInput = document.querySelector("#distillUpload");
+const buildKnowledgeUploadInput = document.querySelector("#buildKnowledgeUpload");
 const jobList = document.querySelector("#jobList");
 const refreshJobsButton = document.querySelector("#refreshJobs");
-const rebuildNotesButton = document.querySelector("#rebuildNotes");
+const rebuildKnowledgeButton = document.querySelector("#rebuildKnowledge");
 const settingsToggle = document.querySelector("#settingsToggle");
 const settingsPanel = document.querySelector("#settingsPanel");
 const settingsForm = document.querySelector("#settingsForm");
@@ -28,6 +50,11 @@ const settingGroupChunks = document.querySelector("#settingGroupChunks");
 const settingMaxTokens = document.querySelector("#settingMaxTokens");
 const settingExtractionWorkers = document.querySelector("#settingExtractionWorkers");
 const settingRerank = document.querySelector("#settingRerank");
+const reloadSettingsButton = document.querySelector("#reloadSettings");
+const checkLlmButton = document.querySelector("#checkLlm");
+const checkQdrantButton = document.querySelector("#checkQdrant");
+const llmStatus = document.querySelector("#llmStatus");
+const qdrantStatus = document.querySelector("#qdrantStatus");
 const drawer = document.querySelector("#dbDrawer");
 const overlay = document.querySelector("#dbOverlay");
 const drawerKind = document.querySelector("#drawerKind");
@@ -40,6 +67,10 @@ let documentsCache = [];
 let jobsCache = [];
 let jobPollTimer = null;
 let qdrantInfo = {};
+let selectedSourceDocumentId = null;
+let knowledgeEntriesCache = [];
+let selectedKnowledgeEntryId = null;
+let knowledgeMode = "list";
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
@@ -107,13 +138,43 @@ async function api(path, options = {}) {
   return payload;
 }
 
+function setStatusChip(element, label, state = "muted") {
+  if (!element) return;
+  element.textContent = label;
+  element.className = `status-chip ${state}`;
+}
+
+function updateConnectionBadges(health) {
+  if (!health) return;
+  if (health.llm) {
+    const llm = health.llm;
+    setStatusChip(
+      llmStatus,
+      llm.status === "ready" ? `${llm.model_count || 0} models` : "LM Studio offline",
+      llm.status === "ready" ? "ready" : "error",
+    );
+  } else {
+    setStatusChip(llmStatus, "Nimbus online", "ready");
+  }
+  const qdrant = health.qdrant || {};
+  if (qdrant.status === "ready") {
+    setStatusChip(qdrantStatus, `${qdrant.points_count || 0} entries`, "ready");
+  } else if (qdrant.status === "collection_missing") {
+    setStatusChip(qdrantStatus, "Collection missing", "warn");
+  } else if (qdrant.status) {
+    setStatusChip(qdrantStatus, qdrant.status.replaceAll("_", " "), "error");
+  } else {
+    setStatusChip(qdrantStatus, "Not checked", "muted");
+  }
+}
+
 function setEmptyState() {
   if (!messages.children.length) {
     messages.innerHTML = `
       <div class="empty">
         <div class="empty-mark">N</div>
         <h3>Ready when you are</h3>
-        <p>Upload files, build Qdrant records, and ask from your local knowledge base.</p>
+        <p>Upload files, build the Knowledge Base, and ask from your local sources.</p>
       </div>
     `;
   }
@@ -171,12 +232,16 @@ async function refreshHealth() {
       ? ` · image ${health.image_model}`
       : "";
     modelPill.textContent = `${health.model}${imageLabel} · ${health.embedding_model} · ${backend}`;
+    updateConnectionBadges(health);
     if (documentsCache.length || dbList.children.length) {
       renderDatabases();
+      renderKnowledgePage();
     }
   } catch (error) {
     statusEl.textContent = "Server unavailable";
     statusEl.classList.add("error");
+    setStatusChip(llmStatus, "Server offline", "error");
+    setStatusChip(qdrantStatus, "Unknown", "muted");
   }
 }
 
@@ -248,9 +313,9 @@ function fillSettings(settings) {
   settingVectorBackend.value = settings.vector_backend || "qdrant";
   settingQdrantUrl.value = settings.qdrant_url || "";
   settingQdrantCollection.value = settings.qdrant_collection || "";
-  settingConcurrency.value = settings.notes_concurrency || 1;
-  settingGroupChunks.value = settings.notes_group_chunks || 30;
-  settingMaxTokens.value = settings.notes_max_tokens || 12000;
+  settingConcurrency.value = settings.knowledge_concurrency || 1;
+  settingGroupChunks.value = settings.knowledge_group_chunks || 30;
+  settingMaxTokens.value = settings.knowledge_max_tokens || 12000;
   settingExtractionWorkers.value = settings.extraction_workers || 12;
   settingRerank.checked = Boolean(settings.rerank_enabled);
 }
@@ -267,35 +332,35 @@ function databaseSummary(kind) {
 }
 
 function sourceKindLabel(kind) {
-  return kind === "notes" || kind === "record" ? "record" : (kind || "source");
+  return kind === "knowledge" ? "knowledge" : (kind || "source");
 }
 
 function renderDatabases() {
-  const raw = databaseSummary("raw");
-  const recordCount = Number(qdrantInfo.points_count || 0);
+  const source = databaseSummary("source");
+  const knowledgeEntryCount = Number(qdrantInfo.points_count || 0);
   dbList.innerHTML = [
     {
-      kind: "records",
-      title: "Qdrant Records",
-      body: "Keyword vectors and readable distilled facts stored in Qdrant.",
+      kind: "knowledge",
+      title: "Knowledge Base",
+      body: "Searchable knowledge entries built from your source documents.",
       docs: 0,
-      chunks: recordCount,
+      chunks: knowledgeEntryCount,
     },
     {
-      kind: "raw",
-      title: "Raw SQLite",
+      kind: "source",
+      title: "Source Base",
       body: "Cleaned source text used as fallback and confirmation evidence.",
-      docs: raw.docs.length,
-      chunks: raw.chunks,
+      docs: source.docs.length,
+      chunks: source.chunks,
     },
   ].map((db) => `
     <button class="db-card" type="button" data-db="${db.kind}">
-      <span class="db-icon">${db.kind === "records" ? "Q" : "R"}</span>
+      <span class="db-icon">${db.kind === "knowledge" ? "K" : "S"}</span>
       <span>
         <strong>${db.title}</strong>
         <small>${db.body}</small>
       </span>
-      <em>${db.kind === "records" ? `${db.chunks} records` : `${db.docs} docs · ${db.chunks} chunks`}</em>
+      <em>${db.kind === "knowledge" ? `${db.chunks} entries` : `${db.docs} docs · ${db.chunks} chunks`}</em>
     </button>
   `).join("");
 }
@@ -304,41 +369,378 @@ async function refreshDocuments() {
   const { documents } = await api("/api/documents");
   documentsCache = documents;
   renderDatabases();
+  renderSourcePage();
+}
+
+async function refreshKnowledgeEntries() {
+  const { entries } = await api("/api/knowledge?limit=1000");
+  knowledgeEntriesCache = entries;
+  renderKnowledgePage();
 }
 
 async function refreshDatabases() {
   await refreshHealth();
   await refreshDocuments();
+  await refreshKnowledgeEntries();
+}
+
+function setWorkspaceView(view) {
+  const showSource = view === "source";
+  const showKnowledge = view === "knowledge";
+  sourcePage.hidden = !showSource;
+  knowledgePage.hidden = !showKnowledge;
+  chatPage.hidden = showSource || showKnowledge;
+  askForm.hidden = showSource || showKnowledge;
+  sourceViewButton.classList.toggle("active", showSource);
+  knowledgeViewButton.classList.toggle("active", showKnowledge);
+  chatViewButton.classList.toggle("active", !showSource && !showKnowledge);
+  if (showSource) {
+    renderSourcePage();
+  }
+  if (showKnowledge) {
+    refreshKnowledgeEntries();
+  }
+}
+
+function filteredSourceDocuments() {
+  const query = (sourceSearchInput.value || "").trim().toLowerCase();
+  const docs = documentsCache.filter((doc) => doc.kind === "source");
+  if (!query) return docs;
+  return docs.filter((doc) => {
+    const haystack = `${doc.name} ${doc.id} ${doc.content_hash || ""}`.toLowerCase();
+    return haystack.includes(query);
+  });
+}
+
+function renderSourcePage() {
+  if (!sourceStats || !sourceDocumentList) return;
+  const allDocs = documentsCache.filter((doc) => doc.kind === "source");
+  const docs = filteredSourceDocuments();
+  const totalChunks = allDocs.reduce((sum, doc) => sum + Number(doc.chunk_count || 0), 0);
+  const shownChunks = docs.reduce((sum, doc) => sum + Number(doc.chunk_count || 0), 0);
+  sourceStats.innerHTML = `
+    <article>
+      <strong>${allDocs.length}</strong>
+      <span>Total documents</span>
+    </article>
+    <article>
+      <strong>${totalChunks}</strong>
+      <span>Total chunks</span>
+    </article>
+    <article>
+      <strong>${docs.length}</strong>
+      <span>Shown documents</span>
+    </article>
+    <article>
+      <strong>${shownChunks}</strong>
+      <span>Shown chunks</span>
+    </article>
+  `;
+
+  if (!docs.length) {
+    sourceDocumentList.innerHTML = `<div class="drawer-empty">No Source Base documents match this search.</div>`;
+    return;
+  }
+
+  sourceDocumentList.innerHTML = docs.map((doc) => {
+    const date = new Date(doc.created_at * 1000).toLocaleString();
+    const active = Number(doc.id) === Number(selectedSourceDocumentId) ? " active" : "";
+    return `
+      <button class="source-document-row${active}" type="button" data-source-doc="${doc.id}">
+        <span>
+          <strong>${escapeHtml(doc.name)}</strong>
+          <small>ID ${doc.id} · ${doc.chunk_count} chunks · ${date}</small>
+        </span>
+        <em>${escapeHtml((doc.content_hash || "").slice(0, 10))}</em>
+      </button>
+    `;
+  }).join("");
+}
+
+async function openSourceDocument(documentId) {
+  selectedSourceDocumentId = Number(documentId);
+  renderSourcePage();
+  const doc = documentsCache.find((item) => Number(item.id) === Number(documentId));
+  sourceReader.innerHTML = `<p class="loading">Loading chunks...</p>`;
+  const { chunks } = await api(`/api/documents/${documentId}/chunks`);
+  const date = doc ? new Date(doc.created_at * 1000).toLocaleString() : "";
+  sourceReader.innerHTML = `
+    <header class="source-reader-head">
+      <div>
+        <p class="eyebrow">Document ${escapeHtml(documentId)}</p>
+        <h3>${escapeHtml(doc?.name || "Source document")}</h3>
+        <span>${chunks.length} chunks${date ? ` · ${date}` : ""}</span>
+      </div>
+      <div class="drawer-actions">
+        <button type="button" data-build-knowledge="${documentId}">Build Knowledge Base</button>
+        <button type="button" data-delete-source="${documentId}">Delete</button>
+      </div>
+    </header>
+    <div class="source-chunk-grid">
+      ${chunks.map((chunk) => `
+        <article class="source-chunk-card">
+          <header>
+            <strong>Chunk ${chunk.chunk_index + 1}</strong>
+            <span>${chunk.text.split(/\s+/).filter(Boolean).length} words</span>
+          </header>
+          <div class="chunk-body rendered">${renderMarkdown(chunk.text)}</div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function filteredKnowledgeEntries() {
+  const query = (knowledgeSearchInput.value || "").trim().toLowerCase();
+  if (!query) return knowledgeEntriesCache;
+  return knowledgeEntriesCache.filter((entry) => {
+    const haystack = [
+      entry.document_name,
+      entry.source,
+      entry.information,
+      ...(entry.keywords || []),
+    ].join(" ").toLowerCase();
+    return haystack.includes(query);
+  });
+}
+
+function knowledgeDocumentGroups(entries) {
+  const groups = new Map();
+  for (const entry of entries) {
+    const key = `${entry.document_id}:${entry.document_name}`;
+    if (!groups.has(key)) {
+      groups.set(key, { id: entry.document_id, name: entry.document_name, entries: [] });
+    }
+    groups.get(key).entries.push(entry);
+  }
+  return [...groups.values()];
+}
+
+function renderKnowledgePage() {
+  if (!knowledgeStats || !knowledgeEntryList) return;
+  const entries = filteredKnowledgeEntries();
+  const groups = knowledgeDocumentGroups(entries);
+  const keywordCount = new Set(entries.flatMap((entry) => entry.keywords || [])).size;
+  knowledgeStats.innerHTML = `
+    <article>
+      <strong>${Number(qdrantInfo.points_count || knowledgeEntriesCache.length || 0)}</strong>
+      <span>Qdrant points</span>
+    </article>
+    <article>
+      <strong>${entries.length}</strong>
+      <span>Shown entries</span>
+    </article>
+    <article>
+      <strong>${groups.length}</strong>
+      <span>Source documents</span>
+    </article>
+    <article>
+      <strong>${keywordCount}</strong>
+      <span>Shown keywords</span>
+    </article>
+  `;
+
+  if (knowledgeMode === "graph") {
+    renderKnowledgeGraph(entries);
+  } else {
+    renderKnowledgeList(entries);
+  }
+}
+
+function renderKnowledgeList(entries) {
+  knowledgeListView.hidden = false;
+  knowledgeGraphView.hidden = true;
+  if (!entries.length) {
+    knowledgeEntryList.innerHTML = `<div class="drawer-empty">No Knowledge Base entries match this search.</div>`;
+    return;
+  }
+  knowledgeEntryList.innerHTML = entries.map((entry) => {
+    const active = String(entry.id) === String(selectedKnowledgeEntryId) ? " active" : "";
+    const keywords = (entry.keywords || []).slice(0, 6).map((keyword) => `<span>${escapeHtml(keyword)}</span>`).join("");
+    return `
+      <button class="knowledge-entry-row${active}" type="button" data-knowledge-entry="${escapeHtml(entry.id)}">
+        <strong>${escapeHtml(entry.document_name)}</strong>
+        <small>${escapeHtml(entry.source || `chunk ${entry.chunk_index + 1}`)}</small>
+        <span>${escapeHtml(entry.information)}</span>
+        <div class="knowledge-keywords compact">${keywords}</div>
+      </button>
+    `;
+  }).join("");
+}
+
+function renderKnowledgeEntry(entry) {
+  if (!entry) {
+    return `<div class="source-reader-empty">Select a Knowledge Base entry to inspect it.</div>`;
+  }
+  const keywords = (entry.keywords || []).map((keyword) => `<span>${escapeHtml(keyword)}</span>`).join("");
+  return `
+    <header class="source-reader-head">
+      <div>
+        <p class="eyebrow">Knowledge entry</p>
+        <h3>${escapeHtml(entry.document_name)}</h3>
+        <span>${escapeHtml(entry.source || `chunk ${entry.chunk_index + 1}`)} · source chunks ${entry.source_chunk_start + 1}-${entry.source_chunk_end + 1}</span>
+      </div>
+    </header>
+    <div class="knowledge-keywords">
+      <small>Keywords</small>
+      ${keywords}
+    </div>
+    <div class="knowledge-information rendered">${renderMarkdown(entry.information)}</div>
+    <details class="payload-preview">
+      <summary>Payload</summary>
+      <pre>${escapeHtml(JSON.stringify(entry, null, 2))}</pre>
+    </details>
+  `;
+}
+
+function openKnowledgeEntry(entryId) {
+  selectedKnowledgeEntryId = String(entryId);
+  const entry = knowledgeEntriesCache.find((item) => String(item.id) === String(entryId));
+  knowledgeReader.innerHTML = renderKnowledgeEntry(entry);
+  knowledgeGraphDetail.innerHTML = renderKnowledgeEntry(entry);
+  renderKnowledgePage();
+}
+
+function keywordFrequency(entries) {
+  const counts = new Map();
+  for (const entry of entries) {
+    for (const keyword of entry.keywords || []) {
+      const clean = String(keyword).trim();
+      if (!clean) continue;
+      counts.set(clean, (counts.get(clean) || 0) + 1);
+    }
+  }
+  return counts;
+}
+
+function renderKnowledgeGraph(entries) {
+  knowledgeListView.hidden = true;
+  knowledgeGraphView.hidden = false;
+  const visibleEntries = entries.slice(0, 80);
+  if (!visibleEntries.length) {
+    knowledgeGraph.innerHTML = "";
+    knowledgeGraphDetail.innerHTML = `<div class="source-reader-empty">No graph nodes match this search.</div>`;
+    return;
+  }
+
+  const groups = knowledgeDocumentGroups(visibleEntries);
+  const keywordCounts = keywordFrequency(visibleEntries);
+  const keywords = [...keywordCounts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 42)
+    .map(([keyword]) => keyword);
+  const keywordSet = new Set(keywords);
+  const width = 1160;
+  const rowHeight = 64;
+  const height = Math.max(520, Math.max(groups.length, visibleEntries.length, keywords.length) * rowHeight + 80);
+  const docX = 130;
+  const entryX = 560;
+  const keywordX = 1000;
+  const docY = new Map();
+  const entryY = new Map();
+  const keywordY = new Map();
+
+  groups.forEach((group, index) => docY.set(group.id, 60 + index * rowHeight));
+  visibleEntries.forEach((entry, index) => entryY.set(String(entry.id), 60 + index * rowHeight));
+  keywords.forEach((keyword, index) => keywordY.set(keyword, 60 + index * rowHeight));
+
+  const docLinks = visibleEntries.map((entry) => {
+    const y1 = docY.get(entry.document_id) || 60;
+    const y2 = entryY.get(String(entry.id)) || 60;
+    return `<path class="graph-link" d="M ${docX + 110} ${y1} C ${docX + 250} ${y1}, ${entryX - 180} ${y2}, ${entryX - 46} ${y2}" />`;
+  }).join("");
+
+  const keywordLinks = visibleEntries.flatMap((entry) => (entry.keywords || [])
+    .filter((keyword) => keywordSet.has(keyword))
+    .slice(0, 4)
+    .map((keyword) => {
+      const y1 = entryY.get(String(entry.id)) || 60;
+      const y2 = keywordY.get(keyword) || 60;
+      return `<path class="graph-link keyword-link" d="M ${entryX + 46} ${y1} C ${entryX + 190} ${y1}, ${keywordX - 210} ${y2}, ${keywordX - 86} ${y2}" />`;
+    })).join("");
+
+  const docNodes = groups.map((group) => {
+    const y = docY.get(group.id);
+    return `
+      <g class="graph-node document-node" data-node-type="document" data-document-id="${group.id}">
+        <rect x="${docX - 110}" y="${y - 22}" width="220" height="44" rx="8"></rect>
+        <text x="${docX - 96}" y="${y - 3}">${escapeHtml(truncateText(group.name, 26))}</text>
+        <text class="graph-subtext" x="${docX - 96}" y="${y + 14}">${group.entries.length} entries</text>
+      </g>
+    `;
+  }).join("");
+
+  const entryNodes = visibleEntries.map((entry) => {
+    const y = entryY.get(String(entry.id));
+    const active = String(entry.id) === String(selectedKnowledgeEntryId) ? " active" : "";
+    return `
+      <g class="graph-node entry-node${active}" data-node-type="entry" data-entry-id="${escapeHtml(entry.id)}">
+        <circle cx="${entryX}" cy="${y}" r="20"></circle>
+        <text x="${entryX + 30}" y="${y - 3}">${escapeHtml(truncateText(entry.information, 42))}</text>
+        <text class="graph-subtext" x="${entryX + 30}" y="${y + 14}">${escapeHtml(entry.source || "source")}</text>
+      </g>
+    `;
+  }).join("");
+
+  const keywordNodes = keywords.map((keyword) => {
+    const y = keywordY.get(keyword);
+    return `
+      <g class="graph-node keyword-node" data-node-type="keyword" data-keyword="${escapeHtml(keyword)}">
+        <rect x="${keywordX - 86}" y="${y - 18}" width="172" height="36" rx="18"></rect>
+        <text x="${keywordX - 72}" y="${y + 5}">${escapeHtml(truncateText(keyword, 22))}</text>
+      </g>
+    `;
+  }).join("");
+
+  knowledgeGraph.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  knowledgeGraph.innerHTML = `
+    <text class="graph-label" x="${docX - 110}" y="28">Documents</text>
+    <text class="graph-label" x="${entryX - 20}" y="28">Entries</text>
+    <text class="graph-label" x="${keywordX - 86}" y="28">Keywords</text>
+    ${docLinks}
+    ${keywordLinks}
+    ${docNodes}
+    ${entryNodes}
+    ${keywordNodes}
+  `;
+}
+
+function truncateText(value, maxLength) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text;
 }
 
 async function openDrawer(kind) {
-  if (kind === "records") {
-    drawerKind.textContent = "Qdrant vector database";
-    drawerTitle.textContent = "Distilled Records";
-    drawerDocs.innerHTML = `<div class="drawer-empty">Loading records...</div>`;
+  if (kind === "knowledge") {
+    drawerKind.textContent = "Knowledge Base";
+    drawerTitle.textContent = "Knowledge Base";
+    drawerDocs.innerHTML = `<div class="drawer-empty">Loading Knowledge Base entries...</div>`;
     drawer.hidden = false;
     overlay.hidden = false;
-    const { records } = await api("/api/records?limit=300");
-    drawerDocs.innerHTML = records.length ? records.map((record) => `
-      <article class="drawer-doc record-doc">
+    const { entries } = await api("/api/knowledge?limit=300");
+    drawerDocs.innerHTML = entries.length ? entries.map((entry) => `
+      <article class="drawer-doc knowledge-entry-doc">
         <header>
           <div>
-            <strong>${escapeHtml(record.document_name)}</strong>
-            <span>${escapeHtml(record.source || `chunk ${record.chunk_index + 1}`)}</span>
+            <strong>${escapeHtml(entry.document_name)}</strong>
+            <span>${escapeHtml(entry.source || `chunk ${entry.chunk_index + 1}`)}</span>
           </div>
         </header>
-        <div class="record-keywords">${(record.keywords || []).map((keyword) => `<span>${escapeHtml(keyword)}</span>`).join("")}</div>
-        <div class="chunk-body rendered">${renderMarkdown(record.information || record.text)}</div>
+        <div class="knowledge-keywords" aria-label="Keywords">
+          <small>Keywords</small>
+          ${(entry.keywords || []).map((keyword) => `<span>${escapeHtml(keyword)}</span>`).join("")}
+        </div>
+        <div class="chunk-body rendered">${renderMarkdown(entry.information)}</div>
       </article>
-    `).join("") : `<div class="drawer-empty">No Qdrant records yet.</div>`;
+    `).join("") : `<div class="drawer-empty">No Knowledge Base entries yet.</div>`;
     return;
   }
   const summary = databaseSummary(kind);
-  drawerKind.textContent = "Raw SQLite database";
-  drawerTitle.textContent = "Raw SQLite";
+  drawerKind.textContent = "Source Base";
+  drawerTitle.textContent = "Source Base";
   drawerDocs.innerHTML = summary.docs.length ? summary.docs.map((doc) => {
     const date = new Date(doc.created_at * 1000).toLocaleString();
-    const canDistill = doc.kind === "raw";
+    const canBuildKnowledge = doc.kind === "source";
     return `
       <article class="drawer-doc">
         <header>
@@ -347,7 +749,7 @@ async function openDrawer(kind) {
             <span>${doc.chunk_count} chunks · ${date}</span>
           </div>
           <div class="drawer-actions">
-            ${canDistill ? `<button type="button" data-distill="${doc.id}">Build records</button>` : ""}
+            ${canBuildKnowledge ? `<button type="button" data-build-knowledge="${doc.id}">Build Knowledge Base</button>` : ""}
             <button type="button" data-delete="${doc.id}">Delete</button>
           </div>
         </header>
@@ -420,12 +822,12 @@ fileInput.addEventListener("change", async () => {
       file_data: await readFileAsBase64(file),
     };
     textInput.value = "";
-    textInput.placeholder = "Image selected. Vision text will be extracted, stored raw, then distilled.";
+    textInput.placeholder = "Image selected. Vision text will be extracted, stored in Source Base, then used to build Knowledge Base entries.";
     return;
   }
 
   textInput.value = await file.text();
-  textInput.placeholder = "Paste notes, logs, specs, or article text";
+  textInput.placeholder = "Paste source text, logs, specs, or article text";
 });
 
 ingestForm.addEventListener("submit", async (event) => {
@@ -439,14 +841,14 @@ ingestForm.addEventListener("submit", async (event) => {
       body: JSON.stringify({
         name: nameInput.value.trim() || "Pasted document",
         text: textInput.value,
-        distill: distillUploadInput.checked,
+        build_knowledge: buildKnowledgeUploadInput.checked,
         ...(selectedFilePayload || {}),
       }),
     });
     addMessage("assistant", "Indexing queued. I will update the database counts when the background job finishes.");
     ingestForm.reset();
     selectedFilePayload = null;
-    textInput.placeholder = "Paste notes, logs, specs, or article text";
+    textInput.placeholder = "Paste source text, logs, specs, or article text";
     await refreshJobs();
   } catch (error) {
     addMessage("assistant", `Indexing failed: ${error.message}`);
@@ -458,7 +860,12 @@ ingestForm.addEventListener("submit", async (event) => {
 
 dbList.addEventListener("click", (event) => {
   const card = event.target.closest("[data-db]");
-  if (card) openDrawer(card.dataset.db);
+  if (!card) return;
+  if (card.dataset.db === "source" || card.dataset.db === "knowledge") {
+    setWorkspaceView(card.dataset.db);
+    return;
+  }
+  openDrawer(card.dataset.db);
 });
 
 drawerDocs.addEventListener("click", async (event) => {
@@ -470,27 +877,28 @@ drawerDocs.addEventListener("click", async (event) => {
 
   const deleteButton = event.target.closest("[data-delete]");
   if (deleteButton) {
+    if (!window.confirm("Delete this Source Base document and its chunks?")) return;
     await api(`/api/documents/${deleteButton.dataset.delete}`, { method: "DELETE" });
     await refreshDocuments();
     await refreshHealth();
-    openDrawer("raw");
+    openDrawer("source");
     await refreshHealth();
     return;
   }
 
-  const distillButton = event.target.closest("[data-distill]");
-  if (distillButton) {
-    distillButton.disabled = true;
-    distillButton.textContent = "Working...";
+  const buildKnowledgeButton = event.target.closest("[data-build-knowledge]");
+  if (buildKnowledgeButton) {
+    buildKnowledgeButton.disabled = true;
+    buildKnowledgeButton.textContent = "Working...";
     try {
-      await api(`/api/documents/${distillButton.dataset.distill}/distill`, { method: "POST" });
-      addMessage("assistant", "Qdrant record build queued.");
+      await api(`/api/documents/${buildKnowledgeButton.dataset.buildKnowledge}/build-knowledge`, { method: "POST" });
+      addMessage("assistant", "Knowledge Base build queued.");
       await refreshJobs();
-      openDrawer("raw");
+      openDrawer("source");
     } catch (error) {
-      addMessage("assistant", `Qdrant record build failed: ${error.message}`);
-      distillButton.disabled = false;
-      distillButton.textContent = "Build records";
+      addMessage("assistant", `Knowledge Base build failed: ${error.message}`);
+      buildKnowledgeButton.disabled = false;
+      buildKnowledgeButton.textContent = "Build Knowledge Base";
     }
   }
 });
@@ -529,12 +937,165 @@ document.addEventListener("keydown", (event) => {
   }
 });
 document.querySelector("#refreshDocs").addEventListener("click", refreshDatabases);
+chatViewButton.addEventListener("click", () => setWorkspaceView("chat"));
+knowledgeViewButton.addEventListener("click", () => setWorkspaceView("knowledge"));
+sourceViewButton.addEventListener("click", () => setWorkspaceView("source"));
+knowledgeRefreshButton.addEventListener("click", refreshKnowledgeEntries);
+knowledgeSearchInput.addEventListener("input", renderKnowledgePage);
+knowledgeListModeButton.addEventListener("click", () => {
+  knowledgeMode = "list";
+  knowledgeListModeButton.classList.add("active");
+  knowledgeGraphModeButton.classList.remove("active");
+  renderKnowledgePage();
+});
+knowledgeGraphModeButton.addEventListener("click", () => {
+  knowledgeMode = "graph";
+  knowledgeGraphModeButton.classList.add("active");
+  knowledgeListModeButton.classList.remove("active");
+  renderKnowledgePage();
+});
+knowledgeEntryList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-knowledge-entry]");
+  if (button) {
+    openKnowledgeEntry(button.dataset.knowledgeEntry);
+  }
+});
+knowledgeGraph.addEventListener("click", (event) => {
+  const node = event.target.closest(".graph-node");
+  if (!node) return;
+  if (node.dataset.nodeType === "entry") {
+    openKnowledgeEntry(node.dataset.entryId);
+    return;
+  }
+  if (node.dataset.nodeType === "document") {
+    const entries = knowledgeEntriesCache.filter((entry) => String(entry.document_id) === String(node.dataset.documentId));
+    knowledgeGraphDetail.innerHTML = `
+      <header class="source-reader-head">
+        <div>
+          <p class="eyebrow">Document node</p>
+          <h3>${escapeHtml(entries[0]?.document_name || "Document")}</h3>
+          <span>${entries.length} Knowledge Base entries</span>
+        </div>
+      </header>
+      <div class="graph-detail-list">
+        ${entries.slice(0, 20).map((entry) => `
+          <button type="button" data-knowledge-entry="${escapeHtml(entry.id)}">
+            ${escapeHtml(truncateText(entry.information, 110))}
+          </button>
+        `).join("")}
+      </div>
+    `;
+    return;
+  }
+  if (node.dataset.nodeType === "keyword") {
+    const keyword = node.dataset.keyword;
+    const entries = knowledgeEntriesCache.filter((entry) => (entry.keywords || []).includes(keyword));
+    knowledgeGraphDetail.innerHTML = `
+      <header class="source-reader-head">
+        <div>
+          <p class="eyebrow">Keyword node</p>
+          <h3>${escapeHtml(keyword)}</h3>
+          <span>${entries.length} connected entries</span>
+        </div>
+      </header>
+      <div class="graph-detail-list">
+        ${entries.slice(0, 20).map((entry) => `
+          <button type="button" data-knowledge-entry="${escapeHtml(entry.id)}">
+            ${escapeHtml(truncateText(entry.information, 110))}
+          </button>
+        `).join("")}
+      </div>
+    `;
+  }
+});
+knowledgeGraphDetail.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-knowledge-entry]");
+  if (button) {
+    openKnowledgeEntry(button.dataset.knowledgeEntry);
+  }
+});
+sourceRefreshButton.addEventListener("click", refreshDatabases);
+sourceSearchInput.addEventListener("input", renderSourcePage);
+sourceDocumentList.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-source-doc]");
+  if (button) {
+    await openSourceDocument(button.dataset.sourceDoc);
+  }
+});
+sourceReader.addEventListener("click", async (event) => {
+  const deleteButton = event.target.closest("[data-delete-source]");
+  if (deleteButton) {
+    if (!window.confirm("Delete this Source Base document and its chunks?")) return;
+    await api(`/api/documents/${deleteButton.dataset.deleteSource}`, { method: "DELETE" });
+    selectedSourceDocumentId = null;
+    sourceReader.innerHTML = `<div class="source-reader-empty">Select a document to read its chunks.</div>`;
+    await refreshDatabases();
+    return;
+  }
+  const buildButton = event.target.closest("[data-build-knowledge]");
+  if (buildButton) {
+    buildButton.disabled = true;
+    buildButton.textContent = "Working...";
+    try {
+      await api(`/api/documents/${buildButton.dataset.buildKnowledge}/build-knowledge`, { method: "POST" });
+      addMessage("assistant", "Knowledge Base build queued.");
+      await refreshJobs();
+    } catch (error) {
+      buildButton.disabled = false;
+      buildButton.textContent = "Build Knowledge Base";
+      sourceReader.insertAdjacentHTML("afterbegin", `<div class="inline-error">${escapeHtml(error.message)}</div>`);
+    }
+  }
+});
 refreshJobsButton.addEventListener("click", refreshJobs);
-rebuildNotesButton.addEventListener("click", () => queueMaintenance("/api/rebuild-records", "Qdrant record rebuild"));
+rebuildKnowledgeButton.addEventListener("click", () => queueMaintenance("/api/rebuild-knowledge", "Knowledge Base rebuild"));
 settingsToggle.addEventListener("click", async () => {
   settingsPanel.hidden = !settingsPanel.hidden;
   if (!settingsPanel.hidden) {
     await refreshSettings();
+    await refreshHealth();
+  }
+});
+reloadSettingsButton.addEventListener("click", async () => {
+  reloadSettingsButton.disabled = true;
+  reloadSettingsButton.textContent = "Reloading...";
+  try {
+    await refreshSettings();
+    await refreshHealth();
+  } finally {
+    reloadSettingsButton.disabled = false;
+    reloadSettingsButton.textContent = "Reload saved";
+  }
+});
+checkLlmButton.addEventListener("click", async () => {
+  checkLlmButton.disabled = true;
+  checkLlmButton.textContent = "Checking...";
+  setStatusChip(llmStatus, "Checking", "muted");
+  try {
+    const status = await api("/api/connections");
+    updateConnectionBadges(status);
+  } catch (error) {
+    setStatusChip(llmStatus, "Check failed", "error");
+  } finally {
+    checkLlmButton.disabled = false;
+    checkLlmButton.textContent = "Check local app";
+  }
+});
+checkQdrantButton.addEventListener("click", async () => {
+  checkQdrantButton.disabled = true;
+  checkQdrantButton.textContent = "Checking...";
+  setStatusChip(qdrantStatus, "Checking", "muted");
+  try {
+    const status = await api("/api/connections");
+    qdrantInfo = status.qdrant || {};
+    updateConnectionBadges(status);
+    renderDatabases();
+    renderKnowledgePage();
+  } catch (error) {
+    setStatusChip(qdrantStatus, "Check failed", "error");
+  } finally {
+    checkQdrantButton.disabled = false;
+    checkQdrantButton.textContent = "Check Qdrant";
   }
 });
 settingsForm.addEventListener("submit", async (event) => {
@@ -553,9 +1114,9 @@ settingsForm.addEventListener("submit", async (event) => {
         vector_backend: settingVectorBackend.value,
         qdrant_url: settingQdrantUrl.value.trim(),
         qdrant_collection: settingQdrantCollection.value.trim(),
-        notes_concurrency: Number(settingConcurrency.value || 1),
-        notes_group_chunks: Number(settingGroupChunks.value || 30),
-        notes_max_tokens: Number(settingMaxTokens.value || 12000),
+        knowledge_concurrency: Number(settingConcurrency.value || 1),
+        knowledge_group_chunks: Number(settingGroupChunks.value || 30),
+        knowledge_max_tokens: Number(settingMaxTokens.value || 12000),
         extraction_workers: Number(settingExtractionWorkers.value || 12),
         rerank_enabled: settingRerank.checked,
       }),
@@ -567,7 +1128,7 @@ settingsForm.addEventListener("submit", async (event) => {
     addMessage("assistant", `Settings failed: ${error.message}`);
   } finally {
     button.disabled = false;
-    button.textContent = "Apply";
+    button.textContent = "Apply changes";
   }
 });
 
