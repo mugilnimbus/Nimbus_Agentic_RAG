@@ -394,7 +394,7 @@ so it is not a semantic-search fallback.
 ## UI
 
 ```text
-Dark web interface
+Web interface
   |
   |-- left sidebar
   |     |-- upload / paste / index
