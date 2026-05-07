@@ -1,0 +1,203 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1420" viewBox="0 0 1800 1420" role="img" aria-labelledby="title desc">
+  <title id="title">Nimbus Data and Retrieval Pipeline</title>
+  <desc id="desc">Detailed data flow and retrieval pipeline for Nimbus, from upload extraction through source document storage, source chunk indexing, knowledge distillation, query rewriting, dual vector search, reranking, and final grounded answer generation.</desc>
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#071018"/>
+      <stop offset="100%" stop-color="#101a26"/>
+    </linearGradient>
+    <filter id="shadow" x="-12%" y="-14%" width="124%" height="132%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000" flood-opacity="0.30"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 1 1 L 10 6 L 1 11 z" fill="#71dce8"/>
+    </marker>
+    <marker id="softArrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 1 1 L 10 6 L 1 11 z" fill="#7e93aa"/>
+    </marker>
+    <style>
+      .headline { fill: #edf5ff; font: 800 42px Arial, sans-serif; }
+      .subhead { fill: #a4b6cc; font: 400 20px Arial, sans-serif; }
+      .lane { fill: rgba(12, 20, 31, 0.94); stroke: #24394f; stroke-width: 2; rx: 18; filter: url(#shadow); }
+      .lane-title { fill: #7de7f7; font: 800 23px Arial, sans-serif; }
+      .card { fill: #111b28; stroke: #2e455f; stroke-width: 2; rx: 12; }
+      .green { fill: #0c211d; stroke: #168373; stroke-width: 2; rx: 12; }
+      .amber { fill: #211a10; stroke: #8a6422; stroke-width: 2; rx: 12; }
+      .purple { fill: #19182b; stroke: #4b4a85; stroke-width: 2; rx: 12; }
+      .title { fill: #f3f7ff; font: 800 18px Arial, sans-serif; }
+      .text { fill: #c2ccda; font: 400 15px Arial, sans-serif; }
+      .small { fill: #94a8bf; font: 400 13px Arial, sans-serif; }
+      .chip { fill: #0b141f; stroke: #2f4a65; stroke-width: 1.6; rx: 22; }
+      .chip-text { fill: #88e8fb; font: 700 14px Arial, sans-serif; }
+      .flow { stroke: #71dce8; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .soft-flow { stroke: #7e93aa; stroke-width: 2.2; fill: none; marker-end: url(#softArrow); stroke-dasharray: 8 8; }
+      .label { fill: #9eb1c8; font: 700 13px Arial, sans-serif; }
+      .db { fill: #101b29; stroke: #36536f; stroke-width: 2; }
+      .db-top { fill: #17293c; stroke: #36536f; stroke-width: 2; }
+      .num { fill: #061018; font: 800 16px Arial, sans-serif; }
+      .circle { fill: #70dce8; }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1420" fill="url(#page)"/>
+  <text class="headline" x="56" y="72">Nimbus Data Flow and Retrieval Pipeline</text>
+  <text class="subhead" x="56" y="110">How documents become searchable evidence, and how a chat question becomes a grounded answer.</text>
+  <rect class="chip" x="1270" y="48" width="430" height="46"/>
+  <text class="chip-text" x="1300" y="77">Full source text · Dense KB · Dual vector search</text>
+
+  <!-- Build path -->
+  <rect class="lane" x="54" y="160" width="1692" height="520"/>
+  <text class="lane-title" x="84" y="202">A. Document Ingestion and Index Build Path</text>
+
+  <rect class="card" x="86" y="242" width="244" height="100"/>
+  <circle class="circle" cx="114" cy="270" r="14"/><text class="num" x="109" y="276">1</text>
+  <text class="title" x="140" y="272">Upload or Paste</text>
+  <text class="text" x="108" y="302">Text, CSV, logs, PDF, image</text>
+  <text class="small" x="108" y="324">Browser → POST /api/documents</text>
+
+  <rect class="card" x="386" y="242" width="244" height="100"/>
+  <circle class="circle" cx="414" cy="270" r="14"/><text class="num" x="409" y="276">2</text>
+  <text class="title" x="440" y="272">Extract Text</text>
+  <text class="text" x="408" y="302">PDF text, vision text, raw text</text>
+  <text class="small" x="408" y="324">nimbus/extraction.py</text>
+
+  <rect class="card" x="686" y="242" width="244" height="100"/>
+  <circle class="circle" cx="714" cy="270" r="14"/><text class="num" x="709" y="276">3</text>
+  <text class="title" x="740" y="272">Clean + Normalize</text>
+  <text class="text" x="708" y="302">English/technical filter</text>
+  <text class="small" x="708" y="324">Preserves document line structure</text>
+
+  <rect class="green" x="986" y="242" width="292" height="100"/>
+  <circle class="circle" cx="1014" cy="270" r="14"/><text class="num" x="1009" y="276">4</text>
+  <text class="title" x="1040" y="272">Store Full Source</text>
+  <text class="text" x="1008" y="302">SQLite documents.text</text>
+  <text class="small" x="1008" y="324">Used by Source Documents view</text>
+
+  <rect class="green" x="1334" y="242" width="366" height="100"/>
+  <circle class="circle" cx="1362" cy="270" r="14"/><text class="num" x="1357" y="276">5</text>
+  <text class="title" x="1388" y="272">Create Semantic Source Chunks</text>
+  <text class="text" x="1356" y="302">Headings, tables, lists, code, sections</text>
+  <text class="small" x="1356" y="324">Dynamic fallback evidence chunks</text>
+
+  <rect class="green" x="196" y="434" width="316" height="116"/>
+  <circle class="circle" cx="224" cy="462" r="14"/><text class="num" x="219" y="468">6</text>
+  <text class="title" x="250" y="464">Embed Source Keywords</text>
+  <text class="text" x="218" y="494">Embedding model creates vectors</text>
+  <text class="small" x="218" y="516">Payload keeps original chunk text</text>
+
+  <rect class="green" x="566" y="434" width="316" height="116"/>
+  <circle class="circle" cx="594" cy="462" r="14"/><text class="num" x="589" y="468">7</text>
+  <text class="title" x="620" y="464">Store Source Chunk Vectors</text>
+  <text class="text" x="588" y="494">Qdrant: nimbus_source_chunks</text>
+  <text class="small" x="588" y="516">Used when KB is thin or for evidence</text>
+
+  <rect class="purple" x="936" y="434" width="316" height="116"/>
+  <circle class="circle" cx="964" cy="462" r="14"/><text class="num" x="959" y="468">8</text>
+  <text class="title" x="990" y="464">Pack Knowledge Sections</text>
+  <text class="text" x="958" y="494">Large semantic groups for LLM</text>
+  <text class="small" x="958" y="516">Dense records stay together</text>
+
+  <rect class="purple" x="1306" y="434" width="316" height="116"/>
+  <circle class="circle" cx="1334" cy="462" r="14"/><text class="num" x="1329" y="468">9</text>
+  <text class="title" x="1360" y="464">Distill Dense KB Entries</text>
+  <text class="text" x="1328" y="494">LLM creates compact JSON entries</text>
+  <text class="small" x="1328" y="516">Few entries, rich information</text>
+
+  <rect class="green" x="702" y="586" width="396" height="64"/>
+  <text class="title" x="732" y="616">Store Knowledge Vectors</text>
+  <text class="text" x="732" y="638">Qdrant: nimbus_knowledge_base, vectors built from entry keywords</text>
+
+  <path class="flow" d="M 330 292 L 386 292"/>
+  <path class="flow" d="M 630 292 L 686 292"/>
+  <path class="flow" d="M 930 292 L 986 292"/>
+  <path class="flow" d="M 1278 292 L 1334 292"/>
+  <path class="flow" d="M 1517 342 C 1517 382, 354 386, 354 434"/>
+  <path class="flow" d="M 512 492 L 566 492"/>
+  <path class="flow" d="M 1094 342 L 1094 434"/>
+  <path class="flow" d="M 1252 492 L 1306 492"/>
+  <path class="flow" d="M 1464 550 C 1464 618, 1150 618, 1098 618"/>
+
+  <!-- Runtime path -->
+  <rect class="lane" x="54" y="748" width="1692" height="520"/>
+  <text class="lane-title" x="84" y="790">B. Chat Retrieval and Answer Path</text>
+
+  <rect class="card" x="86" y="830" width="282" height="104"/>
+  <circle class="circle" cx="114" cy="858" r="14"/><text class="num" x="109" y="864">1</text>
+  <text class="title" x="140" y="860">User Question</text>
+  <text class="text" x="108" y="890">Selected chat session</text>
+  <text class="small" x="108" y="912">POST /api/ask</text>
+
+  <rect class="card" x="424" y="830" width="282" height="104"/>
+  <circle class="circle" cx="452" cy="858" r="14"/><text class="num" x="447" y="864">2</text>
+  <text class="title" x="478" y="860">Chat Memory</text>
+  <text class="text" x="446" y="890">Recent turns + focus entities</text>
+  <text class="small" x="446" y="912">Clarifies follow-up references</text>
+
+  <rect class="purple" x="762" y="830" width="282" height="104"/>
+  <circle class="circle" cx="790" cy="858" r="14"/><text class="num" x="785" y="864">3</text>
+  <text class="title" x="816" y="860">Query Rewrite</text>
+  <text class="text" x="784" y="890">Focused retrieval keywords</text>
+  <text class="small" x="784" y="912">Keeps constraints, units, entities</text>
+
+  <rect class="purple" x="1100" y="830" width="282" height="104"/>
+  <circle class="circle" cx="1128" cy="858" r="14"/><text class="num" x="1123" y="864">4</text>
+  <text class="title" x="1154" y="860">Query Expansion</text>
+  <text class="text" x="1122" y="890">Supporting fact searches</text>
+  <text class="small" x="1122" y="912">General, not domain-hard-coded</text>
+
+  <rect class="green" x="1438" y="830" width="282" height="104"/>
+  <circle class="circle" cx="1466" cy="858" r="14"/><text class="num" x="1461" y="864">5</text>
+  <text class="title" x="1492" y="860">Embed Query</text>
+  <text class="text" x="1460" y="890">Same embedding model</text>
+  <text class="small" x="1460" y="912">Used for both vector stores</text>
+
+  <rect class="green" x="260" y="1006" width="330" height="104"/>
+  <circle class="circle" cx="288" cy="1034" r="14"/><text class="num" x="283" y="1040">6</text>
+  <text class="title" x="314" y="1036">Search Knowledge Base</text>
+  <text class="text" x="282" y="1066">Dense distilled entries</text>
+  <text class="small" x="282" y="1088">Qdrant semantic + lexical scoring</text>
+
+  <rect class="green" x="650" y="1006" width="330" height="104"/>
+  <circle class="circle" cx="678" cy="1034" r="14"/><text class="num" x="673" y="1040">7</text>
+  <text class="title" x="704" y="1036">Search Source Chunks</text>
+  <text class="text" x="672" y="1066">Raw semantic fallback evidence</text>
+  <text class="small" x="672" y="1088">Qdrant, SQLite lexical fallback if needed</text>
+
+  <rect class="card" x="1040" y="1006" width="330" height="104"/>
+  <circle class="circle" cx="1068" cy="1034" r="14"/><text class="num" x="1063" y="1040">8</text>
+  <text class="title" x="1094" y="1036">Merge Candidates</text>
+  <text class="text" x="1062" y="1066">Deduplicate KB + Source results</text>
+  <text class="small" x="1062" y="1088">Keep useful hits from both stores</text>
+
+  <rect class="purple" x="1430" y="1006" width="290" height="104"/>
+  <circle class="circle" cx="1458" cy="1034" r="14"/><text class="num" x="1453" y="1040">9</text>
+  <text class="title" x="1484" y="1036">LLM Rerank</text>
+  <text class="text" x="1452" y="1066">Select strongest evidence</text>
+  <text class="small" x="1452" y="1088">Can return fewer results</text>
+
+  <rect class="amber" x="552" y="1166" width="696" height="72"/>
+  <text class="title" x="582" y="1196">Final Answer Generation</text>
+  <text class="text" x="582" y="1220">System prompt + chat context + selected KB/source evidence + latest question. Answer cites only used sources.</text>
+
+  <path class="flow" d="M 368 882 L 424 882"/>
+  <path class="flow" d="M 706 882 L 762 882"/>
+  <path class="flow" d="M 1044 882 L 1100 882"/>
+  <path class="flow" d="M 1382 882 L 1438 882"/>
+  <path class="flow" d="M 1579 934 C 1579 972, 425 968, 425 1006"/>
+  <path class="flow" d="M 1579 934 C 1579 974, 815 970, 815 1006"/>
+  <path class="flow" d="M 590 1058 L 650 1058"/>
+  <path class="flow" d="M 980 1058 L 1040 1058"/>
+  <path class="flow" d="M 1370 1058 L 1430 1058"/>
+  <path class="flow" d="M 1575 1110 C 1575 1190, 1280 1202, 1248 1202"/>
+
+  <!-- Storage reference -->
+  <rect class="lane" x="118" y="1290" width="1564" height="70"/>
+  <text class="title" x="150" y="1320">Storage Summary:</text>
+  <text class="text" x="310" y="1320">SQLite keeps full documents and chats. Qdrant Knowledge stores dense distilled entries. Qdrant Source stores semantic chunks for fallback evidence. Existing documents can be reindexed by rebuilding the Knowledge Base.</text>
+
+  <!-- Cross-links from build to runtime, kept soft -->
+  <path class="soft-flow" d="M 900 650 C 900 760, 425 892, 425 1006"/>
+  <path class="soft-flow" d="M 900 650 C 900 762, 815 886, 815 1006"/>
+
+  <text class="small" x="56" y="1394">Prompting policy: general-purpose behavior, no hard-coded product/question fixes. Retrieval quality comes from dense storage, query rewriting, dual vector search, reranking, and grounded answer prompts.</text>
+</svg>

@@ -1,6 +1,7 @@
 const statusEl = document.querySelector("#status");
 const modelPill = document.querySelector("#modelPill");
-const dbList = document.querySelector("#dbList");
+const chatList = document.querySelector("#chatList");
+const newChatButton = document.querySelector("#newChat");
 const ingestForm = document.querySelector("#ingestForm");
 const askForm = document.querySelector("#askForm");
 const messages = document.querySelector("#messages");
@@ -45,9 +46,11 @@ const settingEmbeddingModel = document.querySelector("#settingEmbeddingModel");
 const settingVectorBackend = document.querySelector("#settingVectorBackend");
 const settingQdrantUrl = document.querySelector("#settingQdrantUrl");
 const settingQdrantCollection = document.querySelector("#settingQdrantCollection");
+const settingQdrantSourceCollection = document.querySelector("#settingQdrantSourceCollection");
 const settingConcurrency = document.querySelector("#settingConcurrency");
 const settingGroupChunks = document.querySelector("#settingGroupChunks");
 const settingMaxTokens = document.querySelector("#settingMaxTokens");
+const settingSourceChunkWords = document.querySelector("#settingSourceChunkWords");
 const settingExtractionWorkers = document.querySelector("#settingExtractionWorkers");
 const settingRerank = document.querySelector("#settingRerank");
 const reloadSettingsButton = document.querySelector("#reloadSettings");
@@ -61,9 +64,19 @@ const drawerKind = document.querySelector("#drawerKind");
 const drawerTitle = document.querySelector("#drawerTitle");
 const drawerDocs = document.querySelector("#drawerDocs");
 const closeDrawerButton = document.querySelector("#closeDrawer");
+const chatDialog = document.querySelector("#chatDialog");
+const chatDialogForm = document.querySelector("#chatDialogForm");
+const chatDialogTitle = document.querySelector("#chatDialogTitle");
+const chatDialogMessage = document.querySelector("#chatDialogMessage");
+const chatDialogInputWrap = document.querySelector("#chatDialogInputWrap");
+const chatDialogInput = document.querySelector("#chatDialogInput");
+const chatDialogCancel = document.querySelector("#chatDialogCancel");
+const chatDialogConfirm = document.querySelector("#chatDialogConfirm");
 
 let selectedFilePayload = null;
 let documentsCache = [];
+let chatsCache = [];
+let activeChatId = null;
 let jobsCache = [];
 let jobPollTimer = null;
 let qdrantInfo = {};
@@ -222,6 +235,53 @@ function addMessage(role, text, sources = []) {
   messages.scrollTop = messages.scrollHeight;
 }
 
+function renderStoredMessages(storedMessages) {
+  messages.innerHTML = "";
+  for (const message of storedMessages) {
+    addMessage(message.role, message.content, message.sources || []);
+  }
+  setEmptyState();
+}
+
+function openChatDialog({ title, message, confirmLabel, danger = false, inputValue = null }) {
+  return new Promise((resolve) => {
+    chatDialogTitle.textContent = title;
+    chatDialogMessage.textContent = message || "";
+    chatDialogConfirm.textContent = confirmLabel;
+    chatDialogConfirm.classList.toggle("danger-action", danger);
+    chatDialogInputWrap.hidden = inputValue === null;
+    chatDialogInput.value = inputValue || "";
+
+    const close = (value) => {
+      chatDialogForm.removeEventListener("submit", onSubmit);
+      chatDialog.removeEventListener("cancel", onCancel);
+      if (chatDialog.open) chatDialog.close();
+      resolve(value);
+    };
+
+    const onCancel = (event) => {
+      event.preventDefault();
+      close(null);
+    };
+
+    const onSubmit = (event) => {
+      event.preventDefault();
+      const action = event.submitter?.value || "cancel";
+      close(action === "confirm" ? (inputValue === null ? true : chatDialogInput.value.trim()) : null);
+    };
+
+    chatDialogForm.addEventListener("submit", onSubmit);
+    chatDialog.addEventListener("cancel", onCancel);
+    chatDialog.showModal();
+    if (inputValue !== null) {
+      chatDialogInput.focus();
+      chatDialogInput.select();
+    } else {
+      chatDialogCancel.focus();
+    }
+  });
+}
+
 async function refreshHealth() {
   try {
     const health = await api("/api/health");
@@ -233,10 +293,7 @@ async function refreshHealth() {
       : "";
     modelPill.textContent = `${health.model}${imageLabel} · ${health.embedding_model} · ${backend}`;
     updateConnectionBadges(health);
-    if (documentsCache.length || dbList.children.length) {
-      renderDatabases();
-      renderKnowledgePage();
-    }
+    renderKnowledgePage();
   } catch (error) {
     statusEl.textContent = "Server unavailable";
     statusEl.classList.add("error");
@@ -297,11 +354,10 @@ async function refreshJobs() {
 
 async function queueMaintenance(path, label) {
   try {
-    const result = await api(path, { method: "POST", body: "{}" });
-    addMessage("assistant", `${label} queued as job ${result.job_id}.`);
+    await api(path, { method: "POST", body: "{}" });
     await refreshJobs();
   } catch (error) {
-    addMessage("assistant", `${label} failed to queue: ${error.message}`);
+    window.alert(`${label} failed to queue: ${error.message}`);
   }
 }
 
@@ -313,9 +369,11 @@ function fillSettings(settings) {
   settingVectorBackend.value = settings.vector_backend || "qdrant";
   settingQdrantUrl.value = settings.qdrant_url || "";
   settingQdrantCollection.value = settings.qdrant_collection || "";
+  settingQdrantSourceCollection.value = settings.qdrant_source_collection || "";
   settingConcurrency.value = settings.knowledge_concurrency || 1;
   settingGroupChunks.value = settings.knowledge_group_chunks || 30;
   settingMaxTokens.value = settings.knowledge_max_tokens || 12000;
+  settingSourceChunkWords.value = settings.source_chunk_max_words || 650;
   settingExtractionWorkers.value = settings.extraction_workers || 12;
   settingRerank.checked = Boolean(settings.rerank_enabled);
 }
@@ -336,39 +394,12 @@ function sourceKindLabel(kind) {
 }
 
 function renderDatabases() {
-  const source = databaseSummary("source");
-  const knowledgeEntryCount = Number(qdrantInfo.points_count || 0);
-  dbList.innerHTML = [
-    {
-      kind: "knowledge",
-      title: "Knowledge Base",
-      body: "Searchable knowledge entries built from your source documents.",
-      docs: 0,
-      chunks: knowledgeEntryCount,
-    },
-    {
-      kind: "source",
-      title: "Source Base",
-      body: "Cleaned source text used as fallback and confirmation evidence.",
-      docs: source.docs.length,
-      chunks: source.chunks,
-    },
-  ].map((db) => `
-    <button class="db-card" type="button" data-db="${db.kind}">
-      <span class="db-icon">${db.kind === "knowledge" ? "K" : "S"}</span>
-      <span>
-        <strong>${db.title}</strong>
-        <small>${db.body}</small>
-      </span>
-      <em>${db.kind === "knowledge" ? `${db.chunks} entries` : `${db.docs} docs · ${db.chunks} chunks`}</em>
-    </button>
-  `).join("");
+  renderKnowledgePage();
 }
 
 async function refreshDocuments() {
   const { documents } = await api("/api/documents");
   documentsCache = documents;
-  renderDatabases();
   renderSourcePage();
 }
 
@@ -382,6 +413,96 @@ async function refreshDatabases() {
   await refreshHealth();
   await refreshDocuments();
   await refreshKnowledgeEntries();
+}
+
+function renderChats() {
+  if (!chatsCache.length) {
+    chatList.innerHTML = `<div class="job-empty">No chats yet.</div>`;
+    return;
+  }
+  chatList.innerHTML = chatsCache.map((chat) => {
+    const active = Number(chat.id) === Number(activeChatId) ? " active" : "";
+    const preview = chat.last_message || "Empty chat";
+    return `
+      <article class="chat-card${active}">
+        <button class="chat-main" type="button" data-chat-id="${chat.id}">
+          <strong>${escapeHtml(chat.title || "New chat")}</strong>
+          <span>${escapeHtml(preview)}</span>
+          <small>${Number(chat.message_count || 0)} messages</small>
+        </button>
+        <div class="chat-actions" aria-label="Chat actions">
+          <button type="button" data-chat-rename="${chat.id}">Rename</button>
+          <button type="button" data-chat-delete="${chat.id}">Delete</button>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+async function refreshChats() {
+  const { chats } = await api("/api/chats");
+  chatsCache = chats;
+  if (!activeChatId && chats.length) {
+    await openChat(chats[0].id);
+    return;
+  }
+  renderChats();
+}
+
+async function createChat() {
+  const { chat } = await api("/api/chats", {
+    method: "POST",
+    body: JSON.stringify({ title: "New chat" }),
+  });
+  chatsCache = [chat, ...chatsCache];
+  await openChat(chat.id);
+}
+
+async function openChat(chatId) {
+  activeChatId = Number(chatId);
+  const { messages: storedMessages } = await api(`/api/chats/${activeChatId}/messages`);
+  renderStoredMessages(storedMessages);
+  renderChats();
+  setWorkspaceView("chat");
+  questionInput.focus();
+}
+
+async function renameChat(chatId) {
+  const chat = chatsCache.find((item) => Number(item.id) === Number(chatId));
+  const cleanTitle = await openChatDialog({
+    title: "Rename Chat",
+    message: "Choose a clearer name for this chat.",
+    confirmLabel: "Rename",
+    inputValue: chat?.title || "New chat",
+  });
+  if (!cleanTitle) return;
+  const { chat: updatedChat } = await api(`/api/chats/${chatId}/rename`, {
+    method: "POST",
+    body: JSON.stringify({ title: cleanTitle }),
+  });
+  chatsCache = chatsCache.map((item) => (Number(item.id) === Number(chatId) ? updatedChat : item));
+  renderChats();
+}
+
+async function deleteChat(chatId) {
+  const chat = chatsCache.find((item) => Number(item.id) === Number(chatId));
+  const title = chat?.title || "this chat";
+  const shouldDelete = await openChatDialog({
+    title: "Delete Chat",
+    message: `Delete "${title}"? This removes the chat history from Nimbus.`,
+    confirmLabel: "Delete",
+    danger: true,
+  });
+  if (!shouldDelete) return;
+  await api(`/api/chats/${chatId}/delete`, { method: "POST", body: "{}" });
+  const deletedActiveChat = Number(activeChatId) === Number(chatId);
+  chatsCache = chatsCache.filter((item) => Number(item.id) !== Number(chatId));
+  if (deletedActiveChat) {
+    activeChatId = null;
+    messages.innerHTML = "";
+  }
+  await refreshChats();
+  setEmptyState();
 }
 
 function setWorkspaceView(view) {
@@ -425,7 +546,7 @@ function renderSourcePage() {
     </article>
     <article>
       <strong>${totalChunks}</strong>
-      <span>Total chunks</span>
+      <span>Retrieval chunks</span>
     </article>
     <article>
       <strong>${docs.length}</strong>
@@ -433,7 +554,7 @@ function renderSourcePage() {
     </article>
     <article>
       <strong>${shownChunks}</strong>
-      <span>Shown chunks</span>
+      <span>Shown retrieval chunks</span>
     </article>
   `;
 
@@ -449,7 +570,7 @@ function renderSourcePage() {
       <button class="source-document-row${active}" type="button" data-source-doc="${doc.id}">
         <span>
           <strong>${escapeHtml(doc.name)}</strong>
-          <small>ID ${doc.id} · ${doc.chunk_count} chunks · ${date}</small>
+          <small>ID ${doc.id} · ${doc.chunk_count} retrieval chunks · ${date}</small>
         </span>
         <em>${escapeHtml((doc.content_hash || "").slice(0, 10))}</em>
       </button>
@@ -461,31 +582,25 @@ async function openSourceDocument(documentId) {
   selectedSourceDocumentId = Number(documentId);
   renderSourcePage();
   const doc = documentsCache.find((item) => Number(item.id) === Number(documentId));
-  sourceReader.innerHTML = `<p class="loading">Loading chunks...</p>`;
+  sourceReader.innerHTML = `<p class="loading">Loading document...</p>`;
   const { chunks } = await api(`/api/documents/${documentId}/chunks`);
+  const fullText = chunks.map((chunk) => chunk.text).join("\n\n");
+  const wordCount = fullText.split(/\s+/).filter(Boolean).length;
   const date = doc ? new Date(doc.created_at * 1000).toLocaleString() : "";
   sourceReader.innerHTML = `
     <header class="source-reader-head">
       <div>
         <p class="eyebrow">Document ${escapeHtml(documentId)}</p>
         <h3>${escapeHtml(doc?.name || "Source document")}</h3>
-        <span>${chunks.length} chunks${date ? ` · ${date}` : ""}</span>
+        <span>${wordCount} words · ${doc?.chunk_count || 0} retrieval chunks${date ? ` · ${date}` : ""}</span>
       </div>
       <div class="drawer-actions">
         <button type="button" data-build-knowledge="${documentId}">Build Knowledge Base</button>
         <button type="button" data-delete-source="${documentId}">Delete</button>
       </div>
     </header>
-    <div class="source-chunk-grid">
-      ${chunks.map((chunk) => `
-        <article class="source-chunk-card">
-          <header>
-            <strong>Chunk ${chunk.chunk_index + 1}</strong>
-            <span>${chunk.text.split(/\s+/).filter(Boolean).length} words</span>
-          </header>
-          <div class="chunk-body rendered">${renderMarkdown(chunk.text)}</div>
-        </article>
-      `).join("")}
+    <div class="source-document-body rendered">
+      ${renderMarkdown(fullText)}
     </div>
   `;
 }
@@ -845,28 +960,38 @@ ingestForm.addEventListener("submit", async (event) => {
         ...(selectedFilePayload || {}),
       }),
     });
-    addMessage("assistant", "Indexing queued. I will update the database counts when the background job finishes.");
     ingestForm.reset();
     selectedFilePayload = null;
     textInput.placeholder = "Paste source text, logs, specs, or article text";
     await refreshJobs();
   } catch (error) {
-    addMessage("assistant", `Indexing failed: ${error.message}`);
+    window.alert(`Indexing failed: ${error.message}`);
   } finally {
     button.disabled = false;
     button.textContent = "Index";
   }
 });
 
-dbList.addEventListener("click", (event) => {
-  const card = event.target.closest("[data-db]");
-  if (!card) return;
-  if (card.dataset.db === "source" || card.dataset.db === "knowledge") {
-    setWorkspaceView(card.dataset.db);
+chatList.addEventListener("click", async (event) => {
+  const renameButton = event.target.closest("[data-chat-rename]");
+  if (renameButton) {
+    await renameChat(renameButton.dataset.chatRename);
     return;
   }
-  openDrawer(card.dataset.db);
+
+  const deleteButton = event.target.closest("[data-chat-delete]");
+  if (deleteButton) {
+    await deleteChat(deleteButton.dataset.chatDelete);
+    return;
+  }
+
+  const card = event.target.closest("[data-chat-id]");
+  if (card) {
+    await openChat(card.dataset.chatId);
+  }
 });
+
+newChatButton.addEventListener("click", createChat);
 
 drawerDocs.addEventListener("click", async (event) => {
   const chunkButton = event.target.closest("[data-chunks]");
@@ -877,7 +1002,13 @@ drawerDocs.addEventListener("click", async (event) => {
 
   const deleteButton = event.target.closest("[data-delete]");
   if (deleteButton) {
-    if (!window.confirm("Delete this Source Base document and its chunks?")) return;
+    const shouldDelete = await openChatDialog({
+      title: "Delete Source Document",
+      message: "Delete this Source Base document and its chunks? This also removes related Knowledge Base entries.",
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!shouldDelete) return;
     await api(`/api/documents/${deleteButton.dataset.delete}`, { method: "DELETE" });
     await refreshDocuments();
     await refreshHealth();
@@ -892,11 +1023,10 @@ drawerDocs.addEventListener("click", async (event) => {
     buildKnowledgeButton.textContent = "Working...";
     try {
       await api(`/api/documents/${buildKnowledgeButton.dataset.buildKnowledge}/build-knowledge`, { method: "POST" });
-      addMessage("assistant", "Knowledge Base build queued.");
       await refreshJobs();
       openDrawer("source");
     } catch (error) {
-      addMessage("assistant", `Knowledge Base build failed: ${error.message}`);
+      window.alert(`Knowledge Base build failed: ${error.message}`);
       buildKnowledgeButton.disabled = false;
       buildKnowledgeButton.textContent = "Build Knowledge Base";
     }
@@ -917,9 +1047,15 @@ askForm.addEventListener("submit", async (event) => {
   try {
     const result = await api("/api/ask", {
       method: "POST",
-      body: JSON.stringify({ question, top_k: Number(topKInput.value || 6) }),
+      body: JSON.stringify({
+        question,
+        top_k: Number(topKInput.value || 6),
+        chat_id: activeChatId,
+      }),
     });
+    activeChatId = Number(result.chat_id || activeChatId);
     addMessage("assistant", result.answer, result.sources);
+    await refreshChats();
   } catch (error) {
     addMessage("assistant", `Answer failed: ${error.message}`);
   } finally {
@@ -936,7 +1072,6 @@ document.addEventListener("keydown", (event) => {
     closeDrawer();
   }
 });
-document.querySelector("#refreshDocs").addEventListener("click", refreshDatabases);
 chatViewButton.addEventListener("click", () => setWorkspaceView("chat"));
 knowledgeViewButton.addEventListener("click", () => setWorkspaceView("knowledge"));
 sourceViewButton.addEventListener("click", () => setWorkspaceView("source"));
@@ -1025,7 +1160,13 @@ sourceDocumentList.addEventListener("click", async (event) => {
 sourceReader.addEventListener("click", async (event) => {
   const deleteButton = event.target.closest("[data-delete-source]");
   if (deleteButton) {
-    if (!window.confirm("Delete this Source Base document and its chunks?")) return;
+    const shouldDelete = await openChatDialog({
+      title: "Delete Source Document",
+      message: "Delete this Source Base document and its chunks? This also removes related Knowledge Base entries.",
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!shouldDelete) return;
     await api(`/api/documents/${deleteButton.dataset.deleteSource}`, { method: "DELETE" });
     selectedSourceDocumentId = null;
     sourceReader.innerHTML = `<div class="source-reader-empty">Select a document to read its chunks.</div>`;
@@ -1038,7 +1179,6 @@ sourceReader.addEventListener("click", async (event) => {
     buildButton.textContent = "Working...";
     try {
       await api(`/api/documents/${buildButton.dataset.buildKnowledge}/build-knowledge`, { method: "POST" });
-      addMessage("assistant", "Knowledge Base build queued.");
       await refreshJobs();
     } catch (error) {
       buildButton.disabled = false;
@@ -1114,18 +1254,19 @@ settingsForm.addEventListener("submit", async (event) => {
         vector_backend: settingVectorBackend.value,
         qdrant_url: settingQdrantUrl.value.trim(),
         qdrant_collection: settingQdrantCollection.value.trim(),
+        qdrant_source_collection: settingQdrantSourceCollection.value.trim(),
         knowledge_concurrency: Number(settingConcurrency.value || 1),
         knowledge_group_chunks: Number(settingGroupChunks.value || 30),
         knowledge_max_tokens: Number(settingMaxTokens.value || 12000),
+        source_chunk_max_words: Number(settingSourceChunkWords.value || 650),
         extraction_workers: Number(settingExtractionWorkers.value || 12),
         rerank_enabled: settingRerank.checked,
       }),
     });
     fillSettings(settings);
     await refreshHealth();
-    addMessage("assistant", "Settings applied. New jobs and questions will use the updated parameters.");
   } catch (error) {
-    addMessage("assistant", `Settings failed: ${error.message}`);
+    window.alert(`Settings failed: ${error.message}`);
   } finally {
     button.disabled = false;
     button.textContent = "Apply changes";
@@ -1136,6 +1277,7 @@ async function init() {
   setEmptyState();
   await refreshHealth();
   await refreshDocuments();
+  await refreshChats();
   refreshJobs();
   refreshSettings();
 }

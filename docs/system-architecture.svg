@@ -1,0 +1,179 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1320" viewBox="0 0 1800 1320" role="img" aria-labelledby="title desc">
+  <title id="title">Nimbus Local Agentic RAG Architecture</title>
+  <desc id="desc">A readable system architecture diagram for Nimbus showing the browser UI, HTTP API, application services, ingestion, storage, retrieval, local model endpoint, and system controllers.</desc>
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#071018"/>
+      <stop offset="100%" stop-color="#101a26"/>
+    </linearGradient>
+    <linearGradient id="teal" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#35d0bd"/>
+      <stop offset="100%" stop-color="#65d8ff"/>
+    </linearGradient>
+    <filter id="shadow" x="-12%" y="-14%" width="124%" height="132%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000" flood-opacity="0.32"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 1 1 L 10 6 L 1 11 z" fill="#70dce8"/>
+    </marker>
+    <style>
+      .headline { fill: #edf5ff; font: 800 42px Arial, sans-serif; }
+      .subhead { fill: #a4b6cc; font: 400 20px Arial, sans-serif; }
+      .lane { fill: rgba(12, 20, 31, 0.94); stroke: #24394f; stroke-width: 2; rx: 18; filter: url(#shadow); }
+      .lane-title { fill: #7de7f7; font: 800 23px Arial, sans-serif; }
+      .card { fill: #111b28; stroke: #2e455f; stroke-width: 2; rx: 12; }
+      .card-green { fill: #0c211d; stroke: #168373; stroke-width: 2; rx: 12; }
+      .card-amber { fill: #211a10; stroke: #8a6422; stroke-width: 2; rx: 12; }
+      .title { fill: #f3f7ff; font: 800 18px Arial, sans-serif; }
+      .text { fill: #c2ccda; font: 400 15px Arial, sans-serif; }
+      .small { fill: #94a8bf; font: 400 13px Arial, sans-serif; }
+      .chip { fill: #0b141f; stroke: #2f4a65; stroke-width: 1.6; rx: 22; }
+      .chip-text { fill: #88e8fb; font: 700 14px Arial, sans-serif; }
+      .flow { stroke: #70dce8; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .flow-soft { stroke: #5b748f; stroke-width: 2.2; fill: none; marker-end: url(#arrow); stroke-dasharray: 8 8; }
+      .label { fill: #9eb1c8; font: 700 13px Arial, sans-serif; }
+      .db { fill: #101b29; stroke: #36536f; stroke-width: 2; }
+      .db-top { fill: #17293c; stroke: #36536f; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1320" fill="url(#page)"/>
+  <text class="headline" x="56" y="72">Nimbus Local Agentic RAG Architecture</text>
+  <text class="subhead" x="56" y="110">Local-first chat RAG with persistent conversations, full source documents, dense Knowledge Base entries, and dual Qdrant retrieval.</text>
+  <rect class="chip" x="1270" y="48" width="430" height="46"/>
+  <text class="chip-text" x="1300" y="77">Qdrant · SQLite · Local OpenAI-compatible API</text>
+
+  <!-- Top row -->
+  <rect class="lane" x="54" y="160" width="370" height="398"/>
+  <text class="lane-title" x="84" y="202">Browser UI</text>
+  <rect class="card" x="86" y="232" width="306" height="76"/>
+  <text class="title" x="108" y="262">Chat Workspace</text>
+  <text class="text" x="108" y="288">Ask, continue chats, inspect sources</text>
+  <rect class="card" x="86" y="328" width="306" height="76"/>
+  <text class="title" x="108" y="358">Source Documents</text>
+  <text class="text" x="108" y="384">Full extracted document reader</text>
+  <rect class="card" x="86" y="424" width="306" height="76"/>
+  <text class="title" x="108" y="454">Knowledge Base View</text>
+  <text class="text" x="108" y="480">Dense entries, keywords, graph/list</text>
+  <rect class="card-green" x="86" y="520" width="306" height="28"/>
+  <text class="chip-text" x="108" y="540">Settings · Jobs · Uploads · Chat list</text>
+
+  <rect class="lane" x="514" y="160" width="380" height="398"/>
+  <text class="lane-title" x="544" y="202">HTTP Server</text>
+  <rect class="card" x="546" y="232" width="316" height="72"/>
+  <text class="title" x="568" y="262">app.py → nimbus/server.py</text>
+  <text class="text" x="568" y="286">Static UI + JSON API</text>
+  <rect class="card" x="546" y="326" width="316" height="96"/>
+  <text class="title" x="568" y="356">API Routes</text>
+  <text class="text" x="568" y="382">/api/ask · /api/documents</text>
+  <text class="text" x="568" y="405">/api/chats · /api/jobs · /api/settings</text>
+  <rect class="card-green" x="546" y="444" width="316" height="72"/>
+  <text class="title" x="568" y="474">Static File Guard</text>
+  <text class="text" x="568" y="498">Serves only files under static/</text>
+
+  <rect class="lane" x="984" y="160" width="762" height="398"/>
+  <text class="lane-title" x="1014" y="202">Application Services</text>
+  <rect class="card" x="1016" y="232" width="328" height="76"/>
+  <text class="title" x="1038" y="262">NimbusApplication</text>
+  <text class="text" x="1038" y="288">Settings, jobs, chat orchestration</text>
+  <rect class="card" x="1386" y="232" width="328" height="76"/>
+  <text class="title" x="1408" y="262">VectorRAG</text>
+  <text class="text" x="1408" y="288">Wires stores, LLM, builders, retrieval</text>
+  <rect class="card" x="1016" y="330" width="328" height="76"/>
+  <text class="title" x="1038" y="360">ChatStore + ChatMemory</text>
+  <text class="text" x="1038" y="386">Persistent chats and focus entities</text>
+  <rect class="card" x="1386" y="330" width="328" height="76"/>
+  <text class="title" x="1408" y="360">JobQueue</text>
+  <text class="text" x="1408" y="386">Serialized background jobs</text>
+  <rect class="card-green" x="1016" y="428" width="328" height="76"/>
+  <text class="title" x="1038" y="458">AnswerEngine</text>
+  <text class="text" x="1038" y="484">Rewrite, expand, rerank, answer</text>
+  <rect class="card-green" x="1386" y="428" width="328" height="76"/>
+  <text class="title" x="1408" y="458">KnowledgeBuilder</text>
+  <text class="text" x="1408" y="484">Dense distillation from packed sections</text>
+
+  <!-- Middle row ingestion/storage/retrieval -->
+  <rect class="lane" x="54" y="632" width="500" height="456"/>
+  <text class="lane-title" x="84" y="674">Ingestion Pipeline</text>
+  <rect class="card" x="86" y="708" width="186" height="72"/>
+  <text class="title" x="108" y="738">Upload / Paste</text>
+  <text class="text" x="108" y="762">Text, CSV, PDF, images</text>
+  <rect class="card" x="334" y="708" width="186" height="72"/>
+  <text class="title" x="356" y="738">Extraction</text>
+  <text class="text" x="356" y="762">Text, PDF, vision, clean</text>
+  <rect class="card-green" x="86" y="826" width="434" height="88"/>
+  <text class="title" x="108" y="858">Full Source Document Storage</text>
+  <text class="text" x="108" y="884">Preserves full extracted text for frontend reading</text>
+  <rect class="card-green" x="86" y="960" width="434" height="88"/>
+  <text class="title" x="108" y="992">Semantic Source Chunk Index</text>
+  <text class="text" x="108" y="1018">Dynamic chunks by headings, tables, code, lists</text>
+
+  <rect class="lane" x="640" y="632" width="528" height="456"/>
+  <text class="lane-title" x="670" y="674">Storage Layer</text>
+  <ellipse class="db-top" cx="770" cy="744" rx="104" ry="24"/>
+  <rect class="db" x="666" y="744" width="208" height="104"/>
+  <ellipse class="db" cx="770" cy="848" rx="104" ry="24"/>
+  <text class="title" x="706" y="782">SQLite</text>
+  <text class="text" x="706" y="808">data/rag.sqlite</text>
+  <text class="small" x="706" y="832">Full source documents</text>
+  <ellipse class="db-top" cx="1034" cy="744" rx="104" ry="24"/>
+  <rect class="db" x="930" y="744" width="208" height="104"/>
+  <ellipse class="db" cx="1034" cy="848" rx="104" ry="24"/>
+  <text class="title" x="970" y="782">SQLite</text>
+  <text class="text" x="970" y="808">data/chats.sqlite</text>
+  <text class="small" x="970" y="832">Chats and messages</text>
+  <rect class="card-green" x="666" y="922" width="208" height="102"/>
+  <text class="title" x="692" y="956">Qdrant KB</text>
+  <text class="text" x="692" y="982">nimbus_knowledge_base</text>
+  <text class="small" x="692" y="1004">Dense LLM entries</text>
+  <rect class="card-green" x="930" y="922" width="208" height="102"/>
+  <text class="title" x="956" y="956">Qdrant Source</text>
+  <text class="text" x="956" y="982">nimbus_source_chunks</text>
+  <text class="small" x="956" y="1004">Fallback evidence</text>
+
+  <rect class="lane" x="1254" y="632" width="492" height="456"/>
+  <text class="lane-title" x="1284" y="674">Retrieval + Answer Generation</text>
+  <rect class="card" x="1286" y="708" width="428" height="72"/>
+  <text class="title" x="1308" y="738">Chat Context + User Question</text>
+  <text class="text" x="1308" y="762">Recent turns clarify follow-ups</text>
+  <rect class="card-green" x="1286" y="820" width="428" height="72"/>
+  <text class="title" x="1308" y="850">Query Rewrite + Expansion</text>
+  <text class="text" x="1308" y="874">Keyword queries for both Qdrant collections</text>
+  <rect class="card-green" x="1286" y="932" width="428" height="72"/>
+  <text class="title" x="1308" y="962">Merge + Rerank</text>
+  <text class="text" x="1308" y="986">Knowledge entries + source chunks</text>
+  <rect class="card-amber" x="1286" y="1032" width="428" height="34"/>
+  <text class="chip-text" x="1308" y="1054">Final answer cites only used sources</text>
+
+  <!-- Bottom row -->
+  <rect class="lane" x="216" y="1152" width="640" height="104"/>
+  <text class="lane-title" x="246" y="1192">OpenAI-compatible Local Model Endpoint</text>
+  <text class="text" x="246" y="1222">Chat model, image extraction model, and embedding model via a local /v1 API.</text>
+
+  <rect class="lane" x="946" y="1152" width="640" height="104"/>
+  <text class="lane-title" x="976" y="1192">System Controllers</text>
+  <text class="text" x="976" y="1222">scripts/nimbusctl.ps1 · scripts/nimbusctl.py · nimbus.bat manage Nimbus and Qdrant.</text>
+
+  <!-- Flow arrows kept intentionally sparse for readability -->
+  <path class="flow" d="M 424 360 L 514 360"/>
+  <text class="label" x="442" y="344">HTTP JSON</text>
+  <path class="flow" d="M 894 360 L 984 360"/>
+  <text class="label" x="916" y="344">service calls</text>
+
+  <path class="flow" d="M 272 744 L 334 744"/>
+  <path class="flow" d="M 428 780 C 500 820, 560 820, 640 798"/>
+  <path class="flow" d="M 302 914 L 302 960"/>
+  <path class="flow" d="M 520 1004 C 586 1004, 606 984, 666 972"/>
+  <path class="flow" d="M 1138 972 C 1196 946, 1234 908, 1286 856"/>
+  <path class="flow" d="M 874 972 C 1020 980, 1160 986, 1286 968"/>
+  <path class="flow" d="M 1034 922 C 1108 898, 1192 876, 1286 856"/>
+  <path class="flow" d="M 1500 780 L 1500 820"/>
+  <path class="flow" d="M 1500 892 L 1500 932"/>
+  <path class="flow" d="M 1500 1004 L 1500 1032"/>
+
+  <path class="flow-soft" d="M 536 1152 C 720 1040, 912 1010, 1034 1024"/>
+  <path class="flow-soft" d="M 536 1152 C 820 1020, 1050 760, 1396 504"/>
+  <path class="flow-soft" d="M 1266 1152 C 1340 1116, 1418 1090, 1500 1066"/>
+
+  <text class="small" x="56" y="1292">Git ignores runtime/private data: .env, data/, .conda/, SQLite files, Qdrant volumes. Public defaults live in .env.example.</text>
+</svg>

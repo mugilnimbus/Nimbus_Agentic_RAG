@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Nimbus Vector RAG</title>
-    <link rel="stylesheet" href="/styles.css?v=14">
+    <link rel="stylesheet" href="/styles.css?v=19">
   </head>
   <body>
     <main class="app">
@@ -42,12 +42,12 @@
           </form>
         </section>
 
-        <section class="db-section" aria-label="Databases">
+        <section class="chat-section" aria-label="Chats">
           <div class="section-head">
-            <h2>Databases</h2>
-            <button id="refreshDocs" class="ghost" type="button">Refresh</button>
+            <h2>Chats</h2>
+            <button id="newChat" class="ghost" type="button">New</button>
           </div>
-          <div id="dbList" class="db-list"></div>
+          <div id="chatList" class="chat-list"></div>
         </section>
 
         <section class="ops-card" aria-label="Operations">
@@ -141,9 +141,14 @@
                     <small>Dashboard usually runs at the same host and port under /dashboard.</small>
                   </label>
                   <label>
-                    Qdrant collection
+                    Knowledge collection
                     <input id="settingQdrantCollection" type="text" placeholder="nimbus_knowledge_base">
                     <small>Changing this starts using a different Knowledge Base collection.</small>
+                  </label>
+                  <label>
+                    Source chunk collection
+                    <input id="settingQdrantSourceCollection" type="text" placeholder="nimbus_source_chunks">
+                    <small>Stores semantic source chunks for fallback retrieval.</small>
                   </label>
                 </div>
                 <button id="checkQdrant" class="ghost compact" type="button">Check Qdrant</button>
@@ -163,19 +168,24 @@
                     <small>Keep 1 for local LLMs unless parallel generation is stable.</small>
                   </label>
                   <label>
-                    Knowledge group chunks
+                    Knowledge input sections
                     <input id="settingGroupChunks" type="number" min="1" max="100">
-                    <small>How many consecutive source chunks go into one extraction prompt.</small>
+                    <small>Reserved compatibility setting; knowledge now uses large semantic sections.</small>
                   </label>
                   <label>
                     Knowledge max tokens
-                    <input id="settingMaxTokens" type="number" min="512" max="32000" step="256">
+                    <input id="settingMaxTokens" type="number" min="512" max="32000" step="1" inputmode="numeric">
                     <small>Maximum output budget for each knowledge extraction call.</small>
+                  </label>
+                  <label>
+                    Source chunk words
+                    <input id="settingSourceChunkWords" type="number" min="120" max="4000" step="10">
+                    <small>Target size for semantic source chunks stored in Qdrant.</small>
                   </label>
                   <label>
                     Extraction workers
                     <input id="settingExtractionWorkers" type="number" min="1" max="20">
-                    <small>CPU workers for file parsing, PDF extraction, cleaning, and chunking.</small>
+                    <small>CPU workers for file parsing, PDF extraction, and cleaning.</small>
                   </label>
                 </div>
                 <label class="check-row setting-toggle">
@@ -261,6 +271,21 @@
       </section>
     </main>
 
+    <dialog id="chatDialog" class="app-dialog" aria-labelledby="chatDialogTitle">
+      <form id="chatDialogForm" method="dialog">
+        <h2 id="chatDialogTitle">Chat</h2>
+        <p id="chatDialogMessage"></p>
+        <label id="chatDialogInputWrap" hidden>
+          Name
+          <input id="chatDialogInput" type="text" autocomplete="off">
+        </label>
+        <div class="dialog-actions">
+          <button id="chatDialogCancel" class="ghost" type="submit" value="cancel">Cancel</button>
+          <button id="chatDialogConfirm" class="primary compact" type="submit" value="confirm">Confirm</button>
+        </div>
+      </form>
+    </dialog>
+
     <div id="dbOverlay" class="overlay" hidden></div>
     <aside id="dbDrawer" class="drawer" aria-label="Database documents" hidden>
       <header class="drawer-head">
@@ -273,6 +298,6 @@
       <div id="drawerDocs" class="drawer-body"></div>
     </aside>
 
-    <script src="/app.js?v=19"></script>
+    <script src="/app.js?v=25"></script>
   </body>
 </html>

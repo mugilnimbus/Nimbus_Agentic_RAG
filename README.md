@@ -1,18 +1,20 @@
 # Nimbus Vector RAG
 
-A local two-tier RAG system with a dark web UI. The Source Base stores only
-source documents and readable source chunks in SQLite. The Knowledge Base stores
-LLM-built retrieval entries in Qdrant: keyword vectors plus readable
-information payloads. The app retrieves Knowledge Base entries first, falls
-back to Source Base chunks when needed, and sends grounded prompts to an
-OpenAI-compatible LM Studio endpoint.
+A local RAG system with a dark web UI. SQLite stores Source Documents as full
+extracted text for reading. Qdrant stores two vector collections: compact
+LLM-built Knowledge Base entries and semantic Source Base chunks used as
+fallback evidence. The app rewrites each chat question into retrieval keywords,
+searches both vector stores, reranks the candidates, and sends grounded context
+to an OpenAI-compatible LM Studio endpoint.
 
 ## Architecture
+
+![Nimbus system architecture](docs/system-architecture.svg)
 
 ```text
 Browser UI
   |
-  |  upload files / ask questions / inspect DBs
+  |  upload files / manage chats / ask questions / inspect sources
   v
 Python HTTP Server: app.py -> nimbus/server.py
   |
@@ -20,10 +22,16 @@ Python HTTP Server: app.py -> nimbus/server.py
   |
   |-- API
       |-- GET    /api/health
+      |-- GET    /api/chats
+      |-- GET    /api/chats/{id}/messages
       |-- GET    /api/documents
       |-- GET    /api/documents/{id}/chunks
       |-- GET    /api/search
       |-- GET    /api/knowledge
+      |-- GET    /api/jobs
+      |-- POST   /api/chats
+      |-- POST   /api/chats/{id}/rename
+      |-- POST   /api/chats/{id}/delete
       |-- POST   /api/documents
       |-- POST   /api/documents/{id}/build-knowledge
       |-- POST   /api/ask
@@ -36,22 +44,25 @@ Nimbus package: nimbus/
   |-- server.py: API routes and app settings
   |-- extraction.py: file parsing, PDF text extraction, base64 validation
   |-- jobs.py: in-memory background job queue and progress tracking
-  |-- prompts.py: LLM prompts for Knowledge Base building, image extraction, rewriting, answers
-  |-- rag.py: RAG core, Source Base store, Knowledge Base vector store, LM Studio calls
+  |-- prompts.py: project prompting policy and LLM prompts for Knowledge Base building, image extraction, rewriting, answers
+  |-- rag.py: RAG core, Source Document store, Qdrant vector stores, LM Studio calls
+  |-- source_chunks.py: semantic Source Base chunk indexing into Qdrant
   |
   v
 SQLite DB: data/rag.sqlite
   |
   |-- documents table
-  |-- chunks table with readable source chunk text only
+  |-- full extracted source text for frontend reading
   |
   v
 Qdrant Vector DB
   configured by QDRANT_URL
-  collection configured by QDRANT_COLLECTION
+  knowledge collection configured by QDRANT_COLLECTION
+  source chunk collection configured by QDRANT_SOURCE_COLLECTION
   |
   |-- Knowledge Base entry vectors built from keywords
-  |-- payload: document id, file name, keywords, information, source range
+  |-- Source Base semantic chunk vectors built from keywords
+  |-- payload: document id, file name, keywords, information, source section
   |
   v
 LM Studio OpenAI-compatible endpoint
@@ -62,20 +73,22 @@ image extraction model configured by IMAGE_MODEL
 
 ## Data Stores
 
-There are two logical databases in the app. The Source Base stores source
-documents and readable source chunk text only. The Knowledge Base stores
-LLM-built entries only. Source Base chunks are not vectorized into Qdrant.
+There are three logical stores in the app:
 
 ```text
+Source Documents
+  Stores full cleaned source text in SQLite.
+  Used by the Source Documents frontend view.
+
 Knowledge Base
-  Stores LLM-generated English entries from Source Base chunks and images.
+  Stores LLM-generated English entries distilled from large semantic source sections.
   Each point vector is built from keywords.
-  Each payload stores keywords, information, document name, source range,
+  Each payload stores keywords, information, document name, source section,
   embedding model, and prompt version.
 
-Source Base
-  Stores cleaned English source text in SQLite.
-  Used as fallback and evidence confirmation.
+Source Base chunks
+  Stores semantic source chunks in Qdrant using the same payload shape.
+  Used as fallback evidence and confirmation for final answers.
 ```
 
 ## Ingestion Flow
@@ -88,21 +101,24 @@ POST /api/documents
   |
   |-- text/log/csv/md/json
   |     -> English filter
-  |     -> chunk
-  |     -> store as raw
+  |     -> store full extracted text in SQLite
+  |     -> semantic chunk by headings, tables, lists, code, and paragraphs
+  |     -> embed source chunk keywords into Qdrant
   |     -> optional Knowledge Base entries
   |
   |-- PDF
   |     -> pypdf text extraction
   |     -> English filter
-  |     -> chunk
-  |     -> store as raw
+  |     -> store full extracted text in SQLite
+  |     -> semantic chunk by document structure
+  |     -> embed source chunk keywords into Qdrant
   |     -> optional Knowledge Base entries
   |
   |-- image
       -> send image to the configured IMAGE_MODEL
-      -> extract Source Base observations
-      -> store as Source Base chunks
+      -> extract Source Document observations
+      -> store full extracted text in SQLite
+      -> semantic chunk and embed source chunk keywords into Qdrant
       -> build Knowledge Base entries
 ```
 
@@ -116,8 +132,7 @@ and `.log`.
 Raw document
   |
   v
-group chunks in large batches
-  KNOWLEDGE_GROUP_CHUNKS=30
+split into large semantic sections within the configured model budget
   |
   v
 send batches to LM Studio
@@ -125,6 +140,7 @@ send batches to LM Studio
   |
   v
 LLM produces JSON Knowledge Base entries
+  compact notes, tables, bullets, trees, procedures, or summaries
   |
   v
 embed each Knowledge Base entry's keywords
@@ -139,6 +155,10 @@ store Knowledge Base points with readable information payloads
 User question
   |
   v
+Attach persistent chat session context
+  selected chat's recent user/assistant turns
+  |
+  v
 LLM query rewrite
   Example:
   "what is my laptops cpu?"
@@ -151,15 +171,10 @@ Search both:
   - original question
   |
   v
-Search Knowledge Base first
+Search Qdrant Knowledge Base and Qdrant Source Base chunks
   |
-  | if useful hits found
   v
-Use Knowledge Base entries + some Source Base confirmation
-  |
-  | otherwise
-  v
-Use Source Base fallback
+Merge useful candidates from both stores
   |
   v
 Build grounded context
@@ -171,7 +186,14 @@ Send context + question to the configured chat model
 Return answer + source dropdowns
 ```
 
+Chats are persisted in SQLite at `data/chats.sqlite`. The answer engine passes
+recent turns from the selected chat as conversation context, which helps
+follow-up questions resolve the previous subject without turning old answers
+into evidence. Grounding still comes from the Knowledge Base and Source Base.
+
 ## Retrieval
+
+![Nimbus data and retrieval flow](docs/data-retrieval-flow.svg)
 
 The system uses semantic embeddings from LM Studio and stores them in Qdrant.
 
@@ -187,26 +209,187 @@ Knowledge Base entry keywords
 At search time:
 
 ```text
-Qdrant semantic vector similarity
+Qdrant semantic vector similarity in both collections
 + small lexical overlap score
-+ Knowledge Base preference
-= ranked Knowledge Base entries
++ LLM reranking
+= ranked Knowledge Base entries and Source Base chunks
 ```
 
 SQLite is still used because it is excellent for local document metadata and
-chunk inspection. It does not own embeddings anymore. Qdrant is the true vector
-database used for similarity search. Existing Source Base chunks can be rebuilt into
-Qdrant through `POST /api/rebuild-knowledge`.
+full-document inspection. It does not own embeddings anymore. Qdrant is the true
+vector database used for similarity search. Existing Source Documents can be
+rebuilt into both Qdrant collections through `POST /api/rebuild-knowledge`.
 
 ## Qdrant Setup
 
-Start Qdrant before indexing or searching with the default vector backend.
+Qdrant is the vector database for the Knowledge Base. Start it before building
+or searching the Knowledge Base.
 
-Use `scripts/start_all.ps1` with Docker Qdrant configured in `.env`, or start
-Qdrant yourself and put the Qdrant URL and collection name in `.env`.
+## System Control
 
-Qdrant must be running for retrieval. SQLite no longer stores vectors, so it is
-not a semantic-search fallback.
+Use the project controller to start, stop, restart, and inspect the whole local
+system. It manages:
+
+- Nimbus web server
+- Docker Qdrant container
+- runtime PID file
+- stdout/stderr logs under `data/runtime/`
+
+From PowerShell:
+
+```powershell
+.\scripts\nimbusctl.ps1 status
+.\scripts\nimbusctl.ps1 start
+.\scripts\nimbusctl.ps1 stop
+.\scripts\nimbusctl.ps1 restart
+```
+
+Cross-platform controller for Windows, macOS, and Linux:
+
+```bash
+python scripts/nimbusctl.py status
+python scripts/nimbusctl.py start
+python scripts/nimbusctl.py stop
+python scripts/nimbusctl.py restart
+```
+
+From Command Prompt:
+
+```cmd
+nimbus status
+nimbus start
+nimbus stop
+nimbus restart
+```
+
+Start only Qdrant:
+
+```powershell
+.\scripts\nimbusctl.ps1 start-qdrant
+```
+
+Stop only Qdrant:
+
+```powershell
+.\scripts\nimbusctl.ps1 stop-qdrant
+```
+
+Stop Nimbus but keep Qdrant running:
+
+```powershell
+.\scripts\nimbusctl.ps1 stop -KeepQdrant
+```
+
+Run Nimbus in the foreground for debugging:
+
+```powershell
+.\scripts\nimbusctl.ps1 start -Foreground
+```
+
+The older convenience scripts still work:
+
+```powershell
+.\scripts\start_all.ps1
+.\scripts\stop_all.ps1
+.\scripts\restart_all.ps1
+.\scripts\status.ps1
+```
+
+### Option A: Project Script
+
+If Docker Desktop is installed and running, the simplest path is:
+
+```powershell
+.\scripts\start_qdrant.ps1
+```
+
+Or start Qdrant and Nimbus together:
+
+```powershell
+.\scripts\start_all.ps1
+```
+
+The scripts read these values from `.env`:
+
+```text
+QDRANT_URL=http://127.0.0.1:6333
+QDRANT_PORT=6333
+QDRANT_COLLECTION=nimbus_knowledge_base
+QDRANT_SOURCE_COLLECTION=nimbus_source_chunks
+QDRANT_RUNTIME=docker
+QDRANT_CONTAINER_NAME=nimbus-qdrant
+QDRANT_DOCKER_IMAGE=qdrant/qdrant:latest
+QDRANT_DOCKER_VOLUME=nimbus_qdrant_storage
+```
+
+### Option B: Manual Docker Commands
+
+Create a persistent Docker volume:
+
+```powershell
+docker volume create nimbus_qdrant_storage
+```
+
+Start Qdrant:
+
+```powershell
+docker run -d `
+  --name nimbus-qdrant `
+  -p 6333:6333 `
+  -p 6334:6334 `
+  -v nimbus_qdrant_storage:/qdrant/storage `
+  qdrant/qdrant:latest
+```
+
+Verify it is running:
+
+```powershell
+docker ps --filter "name=nimbus-qdrant"
+```
+
+Check the Qdrant API:
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:6333/collections -UseBasicParsing
+```
+
+Open the Qdrant dashboard:
+
+```text
+http://localhost:6333/dashboard
+```
+
+### Docker Maintenance
+
+Stop Qdrant:
+
+```powershell
+docker stop nimbus-qdrant
+```
+
+Start it again:
+
+```powershell
+docker start nimbus-qdrant
+```
+
+Remove the container but keep the stored vectors:
+
+```powershell
+docker rm -f nimbus-qdrant
+```
+
+Delete all Qdrant vector data:
+
+```powershell
+docker rm -f nimbus-qdrant
+docker volume rm nimbus_qdrant_storage
+```
+
+After deleting the volume, create it again and rerun the `docker run` command.
+
+Qdrant must be running for semantic retrieval. SQLite no longer stores vectors,
+so it is not a semantic-search fallback.
 
 ## UI
 
@@ -215,12 +398,14 @@ Dark web interface
   |
   |-- left sidebar
   |     |-- upload / paste / index
-  |     |-- Knowledge Base card
-  |     |-- Source Base card
+  |     |-- persistent chat list
+  |     |-- chat rename/delete actions
+  |     |-- background operations
   |
-  |-- database drawer
-  |     |-- documents inside selected DB
-  |     |-- chunk viewer
+  |-- top view switch
+  |     |-- Chat
+  |     |-- Knowledge Base
+  |     |-- Source Documents
   |
   |-- chat area
         |-- user/assistant bubbles
@@ -235,32 +420,74 @@ app.py
   small entrypoint that starts Nimbus
 
 nimbus/server.py
-  HTTP server, API routes, settings, background task wiring
+  HTTP handler and API routing only
+
+nimbus/application.py
+  Application service object, settings, background task wiring, chat flow
+
+nimbus/answer_engine.py
+  Query rewrite, follow-up handling, context selection, reranking, answer formatting
 
 nimbus/extraction.py
   file parsing, image/PDF dispatch, concurrent PDF page extraction
 
+nimbus/chat_memory.py
+  Small in-memory rolling chat memory and focus tracking
+
+nimbus/chat_store.py
+  Persistent SQLite chat sessions and message history
+
 nimbus/jobs.py
   in-memory job queue, serialized execution, progress state
 
+nimbus/knowledge.py
+  Knowledge Base build orchestration from large semantic source sections
+
+nimbus/llm.py
+  OpenAI-compatible chat and embedding client
+
+nimbus/models.py
+  Shared data models
+
+nimbus/text_processing.py
+  text normalization, English filtering, semantic chunking, stable hashes
+
+nimbus/knowledge_parser.py
+  parser for LLM-produced Knowledge Base JSON or fallback Markdown
+
+nimbus/retrieval.py
+  retrieval scoring, follow-up focus, reranking helpers, context formatting
+
+nimbus/source_store.py
+  SQLite Source Document storage, migrations, full-document access, lexical fallback search
+
+nimbus/source_chunks.py
+  semantic Source Base chunk indexing into the Qdrant source chunk collection
+
+nimbus/vector_store.py
+  Qdrant collection storage, vector collection management, semantic search
+
 nimbus/rag.py
-  RAG logic, Source Base chunks, Knowledge Base entries, retrieval, LLM calls
+  Thin facade that wires Source Base, Knowledge Base, LLM, builder, and answer engine
 
 nimbus/prompts.py
-  Prompt templates for JSON Knowledge Base building, image extraction, query rewrite,
-  answer generation, and reranking
+  Project prompting policy and templates for Knowledge Base building, image extraction,
+  query rewrite, answer generation, and reranking
 
 static/index.html
   UI structure
 
 static/app.js
-  browser logic, uploads, chat, DB drawer, Markdown rendering
+  browser logic, uploads, persistent chats, source/knowledge views, Markdown rendering
 
 static/styles.css
   dark professional UI styling
 
 data/rag.sqlite
-  persistent document metadata and source chunk text
+  persistent document metadata and full extracted source text
+
+data/chats.sqlite
+  persistent chat sessions and message history
 
 storage/
   legacy local Qdrant storage path; Docker Qdrant normally uses its named volume
@@ -276,7 +503,13 @@ python -m pip install -r requirements.txt
 ```
 
 ```powershell
-.\scripts\start_all.ps1
+.\scripts\nimbusctl.ps1 start
+```
+
+Cross-platform:
+
+```bash
+python scripts/nimbusctl.py start
 ```
 
 Open:
@@ -285,27 +518,39 @@ Open:
 http://localhost:8000
 ```
 
+Qdrant dashboard:
+
+```text
+http://localhost:6333/dashboard
+```
+
 ## Configuration
 
 Private runtime settings live in `.env`, which is ignored by git. Use
 `.env.example` as the template.
 
 ```text
-OPENAI_BASE_URL=<openai-compatible-endpoint>
+OPENAI_BASE_URL=http://127.0.0.1:1234/v1
 OPENAI_MODEL=<chat-model-name>
 IMAGE_MODEL=<image-capable-chat-model-name>
 EMBEDDING_MODEL=<embedding-model-name>
-OPENAI_API_KEY=<api-key-or-local-placeholder>
+OPENAI_API_KEY=local-key
 PORT=8000
+HOST=127.0.0.1
 RAG_DB=./data/rag.sqlite
 KNOWLEDGE_GROUP_CHUNKS=30
 KNOWLEDGE_MAX_TOKENS=12000
 KNOWLEDGE_CONCURRENCY=1
+SOURCE_CHUNK_MAX_WORDS=650
 EXTRACTION_WORKERS=12
+CHAT_MEMORY_TURNS=24
+CHAT_MEMORY_SUMMARY_CHARS=700
+CHAT_MEMORY_MESSAGE_CHARS=4000
 VECTOR_BACKEND=qdrant
-QDRANT_URL=<qdrant-url>
-QDRANT_PORT=<qdrant-port>
+QDRANT_URL=http://127.0.0.1:6333
+QDRANT_PORT=6333
 QDRANT_COLLECTION=nimbus_knowledge_base
+QDRANT_SOURCE_COLLECTION=nimbus_source_chunks
 QDRANT_RUNTIME=docker
 QDRANT_CONTAINER_NAME=nimbus-qdrant
 QDRANT_DOCKER_IMAGE=qdrant/qdrant:latest

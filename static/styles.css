@@ -68,7 +68,7 @@ button {
 
 .brand,
 .ingest-card,
-.db-section,
+.chat-section,
 .ops-card {
   flex: 0 0 auto;
 }
@@ -124,9 +124,10 @@ h2 {
 
 .ingest-card,
 .ops-card,
-.db-card,
-.bubble,
-.drawer-doc {
+  .db-card,
+  .chat-card,
+  .bubble,
+  .drawer-doc {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -196,6 +197,10 @@ select:focus {
   padding: 0 16px;
 }
 
+.primary.danger-action {
+  background: linear-gradient(135deg, #ff6b8a, #ff9c6b);
+}
+
 .ghost,
 .icon-button,
 .drawer-actions button,
@@ -211,6 +216,82 @@ select:focus {
 .db-list {
   display: grid;
   gap: 10px;
+}
+
+.chat-list {
+  display: grid;
+  gap: 8px;
+}
+
+.chat-card {
+  color: var(--ink);
+  display: grid;
+  overflow: hidden;
+  text-align: left;
+}
+
+.chat-card:hover,
+.chat-card.active {
+  background: var(--panel-2);
+  border-color: rgba(56, 214, 181, 0.58);
+}
+
+.chat-main {
+  background: transparent;
+  color: inherit;
+  display: grid;
+  gap: 5px;
+  padding: 11px;
+  text-align: left;
+  width: 100%;
+}
+
+.chat-card strong,
+.chat-card span,
+.chat-card small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.chat-card strong {
+  font-size: 13px;
+}
+
+.chat-card span {
+  color: #cbd5e3;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.chat-card small {
+  color: var(--accent-2);
+  font-size: 11px;
+}
+
+.chat-actions {
+  border-top: 1px solid rgba(38, 50, 65, 0.72);
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 1fr 1fr;
+  padding: 0 10px 10px;
+}
+
+.chat-actions button {
+  background: #0b1118;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: #cbd5e3;
+  min-height: 28px;
+  padding: 0 8px;
+}
+
+.chat-actions button:hover {
+  border-color: rgba(56, 214, 181, 0.48);
+  color: var(--ink);
+}
+
+.chat-actions [data-chat-delete] {
+  color: var(--danger);
 }
 
 .ops-actions {
@@ -346,7 +427,7 @@ select:focus {
 .workspace {
   background: radial-gradient(circle at top right, rgba(56, 214, 181, 0.08), transparent 34%), #0a0d12;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   height: 100vh;
   min-height: 0;
   min-width: 0;
@@ -357,6 +438,7 @@ select:focus {
   align-items: center;
   border-bottom: 1px solid var(--line);
   display: flex;
+  grid-row: 1;
   justify-content: space-between;
   padding: 18px 24px;
 }
@@ -403,6 +485,7 @@ select:focus {
     radial-gradient(circle at top right, rgba(47, 211, 215, 0.09), transparent 34%),
     #0b1017;
   border-bottom: 1px solid var(--line);
+  grid-row: 2;
   max-height: min(58vh, 640px);
   overflow-y: auto;
   padding: 18px 24px 22px;
@@ -545,12 +628,14 @@ select:focus {
 }
 
 .workspace-page {
+  grid-row: 3;
   min-height: 0;
   overflow: hidden;
 }
 
 .chat-page {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -741,6 +826,15 @@ select:focus {
 .source-chunk-card header span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.source-document-body {
+  background: #0b1118;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  line-height: 1.65;
+  padding: 18px;
+  white-space: normal;
 }
 
 .knowledge-tabs {
@@ -1124,6 +1218,7 @@ select:focus {
   border-top: 1px solid var(--line);
   display: grid;
   gap: 12px;
+  grid-row: 4;
   grid-template-columns: minmax(0, 1fr) 92px auto;
   padding: 16px 24px;
 }
@@ -1256,6 +1351,42 @@ select:focus {
   color: var(--muted);
   padding: 20px;
   text-align: center;
+}
+
+.app-dialog {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  max-width: min(460px, calc(100vw - 32px));
+  padding: 0;
+  width: 460px;
+}
+
+.app-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.app-dialog form {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.app-dialog h2 {
+  font-size: 18px;
+}
+
+.app-dialog p {
+  color: #cbd5e3;
+  line-height: 1.45;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .error {
