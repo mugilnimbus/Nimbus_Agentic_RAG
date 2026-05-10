@@ -149,6 +149,9 @@ class RAGHandler(SimpleHTTPRequestHandler):
         if path == "/api/ask":
             self.send_json(self.ask_response())
             return True
+        if path == "/api/agent/ask":
+            self.send_json(self.agent_ask_response())
+            return True
         if path == "/api/rebuild-knowledge":
             job_id = APP.queue_rebuild_knowledge()
             self.send_json(self.queued_response(job_id), HTTPStatus.ACCEPTED)
@@ -166,6 +169,14 @@ class RAGHandler(SimpleHTTPRequestHandler):
             raise ValueError("Question is required.")
         chat_id = payload.get("chat_id")
         return APP.ask(question, int(payload.get("top_k") or 6), int(chat_id) if chat_id else None)
+
+    def agent_ask_response(self) -> dict:
+        payload = self.read_json()
+        question = str(payload.get("question") or "").strip()
+        if not question:
+            raise ValueError("Question is required.")
+        chat_id = payload.get("chat_id")
+        return APP.ask_agent(question, int(payload.get("top_k") or 6), int(chat_id) if chat_id else None)
 
     def search_response(self, params: dict[str, list[str]]) -> dict:
         query = params.get("q", [""])[0]

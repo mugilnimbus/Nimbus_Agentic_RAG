@@ -32,6 +32,7 @@ const textInput = document.querySelector("#docText");
 const nameInput = document.querySelector("#docName");
 const questionInput = document.querySelector("#question");
 const topKInput = document.querySelector("#topK");
+const answerModeInput = document.querySelector("#answerMode");
 const buildKnowledgeUploadInput = document.querySelector("#buildKnowledgeUpload");
 const jobList = document.querySelector("#jobList");
 const refreshJobsButton = document.querySelector("#refreshJobs");
@@ -52,6 +53,7 @@ const settingGroupChunks = document.querySelector("#settingGroupChunks");
 const settingMaxTokens = document.querySelector("#settingMaxTokens");
 const settingSourceChunkWords = document.querySelector("#settingSourceChunkWords");
 const settingExtractionWorkers = document.querySelector("#settingExtractionWorkers");
+const settingAgentMaxSteps = document.querySelector("#settingAgentMaxSteps");
 const settingRerank = document.querySelector("#settingRerank");
 const reloadSettingsButton = document.querySelector("#reloadSettings");
 const checkLlmButton = document.querySelector("#checkLlm");
@@ -198,7 +200,7 @@ function clearEmptyState() {
   if (empty) empty.remove();
 }
 
-function addMessage(role, text, sources = []) {
+function addMessage(role, text, sources = [], agentSteps = []) {
   clearEmptyState();
   const row = document.createElement("article");
   row.className = `message-row ${role}`;
@@ -229,6 +231,27 @@ function addMessage(role, text, sources = []) {
       </div>
     `;
     row.querySelector(".bubble").appendChild(sourceWrap);
+  }
+
+  if (agentSteps.length) {
+    const stepWrap = document.createElement("details");
+    stepWrap.className = "agent-trace";
+    stepWrap.innerHTML = `
+      <summary>Agent steps (${agentSteps.length})</summary>
+      <div class="agent-step-list">
+        ${agentSteps.map((step) => `
+          <article class="agent-step ${step.ok ? "ok" : "error"}">
+            <header>
+              <strong>${escapeHtml(step.index)}. ${escapeHtml(step.tool || "tool")}</strong>
+              <span>${step.ok ? "complete" : "failed"}</span>
+            </header>
+            ${Object.keys(step.arguments || {}).length ? `<code>${escapeHtml(JSON.stringify(step.arguments))}</code>` : ""}
+            <p>${escapeHtml(step.summary || "")}</p>
+          </article>
+        `).join("")}
+      </div>
+    `;
+    row.querySelector(".bubble").appendChild(stepWrap);
   }
 
   messages.appendChild(row);
@@ -375,6 +398,7 @@ function fillSettings(settings) {
   settingMaxTokens.value = settings.knowledge_max_tokens || 12000;
   settingSourceChunkWords.value = settings.source_chunk_max_words || 650;
   settingExtractionWorkers.value = settings.extraction_workers || 12;
+  settingAgentMaxSteps.value = settings.agent_max_steps || 6;
   settingRerank.checked = Boolean(settings.rerank_enabled);
 }
 
@@ -1045,7 +1069,8 @@ askForm.addEventListener("submit", async (event) => {
   button.textContent = "Thinking...";
 
   try {
-    const result = await api("/api/ask", {
+    const endpoint = answerModeInput.value === "agent" ? "/api/agent/ask" : "/api/ask";
+    const result = await api(endpoint, {
       method: "POST",
       body: JSON.stringify({
         question,
@@ -1054,7 +1079,7 @@ askForm.addEventListener("submit", async (event) => {
       }),
     });
     activeChatId = Number(result.chat_id || activeChatId);
-    addMessage("assistant", result.answer, result.sources);
+    addMessage("assistant", result.answer, result.sources, result.agent_steps || []);
     await refreshChats();
   } catch (error) {
     addMessage("assistant", `Answer failed: ${error.message}`);
@@ -1260,6 +1285,7 @@ settingsForm.addEventListener("submit", async (event) => {
         knowledge_max_tokens: Number(settingMaxTokens.value || 12000),
         source_chunk_max_words: Number(settingSourceChunkWords.value || 650),
         extraction_workers: Number(settingExtractionWorkers.value || 12),
+        agent_max_steps: Number(settingAgentMaxSteps.value || 6),
         rerank_enabled: settingRerank.checked,
       }),
     });
