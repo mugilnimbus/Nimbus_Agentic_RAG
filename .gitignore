@@ -18,5 +18,6 @@ snapshots/
 qdrant/
 .qdrant-initialized
 
+System_Architecture.png
 
 to_do.txt
