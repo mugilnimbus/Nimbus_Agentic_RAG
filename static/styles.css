@@ -1212,6 +1212,67 @@ select:focus {
   margin-top: 9px;
 }
 
+.agent-trace {
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.agent-trace > summary {
+  color: var(--accent-2);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.agent-step-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.agent-step {
+  background: #0c1219;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px;
+}
+
+.agent-step header {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.agent-step span {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.agent-step.ok span {
+  color: var(--accent);
+}
+
+.agent-step.error span {
+  color: var(--danger);
+}
+
+.agent-step code {
+  display: block;
+  margin-top: 8px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.agent-step p {
+  color: #cbd5e3;
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
 .composer {
   align-items: end;
   background: rgba(11, 16, 23, 0.96);
@@ -1219,7 +1280,7 @@ select:focus {
   display: grid;
   gap: 12px;
   grid-row: 4;
-  grid-template-columns: minmax(0, 1fr) 92px auto;
+  grid-template-columns: 130px minmax(0, 1fr) 92px auto;
   padding: 16px 24px;
 }
 

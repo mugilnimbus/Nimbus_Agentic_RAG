@@ -10,7 +10,9 @@ from nimbus.chat_store import ChatStore
 from nimbus.config import env_int, env_str
 from nimbus.extraction import document_text_from_payload
 from nimbus.jobs import JobQueue
+from nimbus.agent import NimbusAgent
 from nimbus.rag import VectorRAG
+from nimbus.tools import AgentToolbox
 
 
 class NimbusApplication:
@@ -21,6 +23,13 @@ class NimbusApplication:
         self.config_lock = threading.Lock()
         self.extraction_workers = max(1, min(20, env_int("EXTRACTION_WORKERS", 12)))
         self.rag = self.make_rag()
+        self.agent = self.make_agent()
+
+    def make_agent(self) -> NimbusAgent:
+        return NimbusAgent(
+            rag=self.rag,
+            toolbox=AgentToolbox(self.rag, self.settings),
+        )
 
     def make_rag(self) -> VectorRAG:
         model = env_str("OPENAI_MODEL")
@@ -52,6 +61,7 @@ class NimbusApplication:
             "knowledge_max_tokens": self.rag.knowledge_max_tokens,
             "source_chunk_max_words": self.rag.source_chunk_max_words,
             "rerank_enabled": self.rag.rerank_enabled,
+            "agent_max_steps": self.agent.max_steps,
             "vector_backend": self.rag.vector_backend,
             "qdrant": self.rag.qdrant_status(),
             "documents": len(self.rag.documents()),
@@ -69,6 +79,7 @@ class NimbusApplication:
             "source_chunk_max_words": self.rag.source_chunk_max_words,
             "extraction_workers": self.extraction_workers,
             "rerank_enabled": self.rag.rerank_enabled,
+            "agent_max_steps": self.agent.max_steps,
             "vector_backend": self.rag.vector_backend,
             "qdrant_url": self.rag.qdrant_url,
             "qdrant_collection": self.rag.qdrant_collection,
@@ -149,7 +160,11 @@ class NimbusApplication:
             )
             os.environ["EXTRACTION_WORKERS"] = str(self.extraction_workers)
             os.environ["RAG_RERANK"] = "1" if bool(payload.get("rerank_enabled", self.rag.rerank_enabled)) else "0"
+            os.environ["AGENT_MAX_STEPS"] = str(
+                max(1, min(12, int(payload.get("agent_max_steps") or self.agent.max_steps)))
+            )
             self.rag = self.make_rag()
+            self.agent = self.make_agent()
 
     def ask(self, question: str, top_k: int, chat_id: int | None = None) -> dict:
         chat = self.chat_store.get_or_create_chat(chat_id)
@@ -157,6 +172,28 @@ class NimbusApplication:
         chat_memory = memory.as_prompt_text()
         conversation_messages = memory.as_messages()
         result = self.rag.answer(
+            question,
+            top_k=top_k,
+            chat_memory=chat_memory,
+            conversation_messages=conversation_messages,
+        )
+        self.chat_store.append_message(chat["id"], "user", question)
+        self.chat_store.append_message(
+            chat["id"],
+            "assistant",
+            str(result.get("answer") or ""),
+            sources=result.get("sources") or [],
+            focus_entities=result.get("focus_entities") or [],
+        )
+        result["chat_id"] = chat["id"]
+        return result
+
+    def ask_agent(self, question: str, top_k: int, chat_id: int | None = None) -> dict:
+        chat = self.chat_store.get_or_create_chat(chat_id)
+        memory = self.chat_memory_for_chat(chat["id"])
+        chat_memory = memory.as_prompt_text()
+        conversation_messages = memory.as_messages()
+        result = self.agent.answer(
             question,
             top_k=top_k,
             chat_memory=chat_memory,

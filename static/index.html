@@ -187,6 +187,11 @@
                     <input id="settingExtractionWorkers" type="number" min="1" max="20">
                     <small>CPU workers for file parsing, PDF extraction, and cleaning.</small>
                   </label>
+                  <label>
+                    Agent max steps
+                    <input id="settingAgentMaxSteps" type="number" min="1" max="12">
+                    <small>Maximum read-only tool calls in agentic mode.</small>
+                  </label>
                 </div>
                 <label class="check-row setting-toggle">
                   <input id="settingRerank" type="checkbox">
@@ -261,6 +266,13 @@
           </div>
         </section>
         <form id="askForm" class="composer">
+          <label>
+            Mode
+            <select id="answerMode">
+              <option value="rag">Fast RAG</option>
+              <option value="agent">Agentic</option>
+            </select>
+          </label>
           <input id="question" type="text" placeholder="Ask anything in your knowledge base" autocomplete="off">
           <label>
             Sources
@@ -298,6 +310,6 @@
       <div id="drawerDocs" class="drawer-body"></div>
     </aside>
 
-    <script src="/app.js?v=25"></script>
+    <script src="/app.js?v=26"></script>
   </body>
 </html>
