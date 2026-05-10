@@ -1,0 +1,21 @@
+Nimbus Agentic System Updates
+=============================
+
+This file is maintained for the agentic-system redesign work.
+
+Update log:
+- Added a modular AgentToolbox design so the agent can use backend capabilities through named tools instead of hard-coded task logic.
+- Added the first read-only tool set: search_knowledge, search_source, list_documents, open_source_document, and inspect_settings.
+- Added a bounded NimbusAgent loop that asks the LLM for structured JSON tool decisions, executes validated backend tools, gathers observations, and writes a final grounded answer.
+- Kept the agent general-purpose: tools describe reusable capabilities, not examples, product-specific shortcuts, hardware-specific rules, or one-off fixes.
+- Added reusable agent prompts to nimbus/prompts.py for tool decisions and final grounded answers.
+- Added /api/agent/ask so the frontend can call the agentic path separately from the fast RAG path.
+- Added an AGENT_MAX_STEPS setting to control how many read-only tool calls the agent may make before final answer generation.
+- Added a Chat composer mode selector: Fast RAG keeps the existing answer path, Agentic uses the new tool loop and shows expandable agent steps.
+- Added runtime settings support for Agent max steps.
+- Verification: Python compile checks passed for the Nimbus backend modules.
+- Verification: the new agent modules import successfully.
+- Verification: NimbusApplication loads with .env and reports agent_max_steps correctly.
+- Blocked runtime smoke test: Docker Desktop was not running, so the controller could not start the Qdrant container during restart.
+- Follow-up docs update: README now documents Fast RAG vs Agentic mode, /api/agent/ask, agent.py, tools.py, read-only tools, and AGENT_MAX_STEPS.
+- Follow-up docs update: added docs/agentic-flow.svg and refreshed architecture/retrieval diagrams to mention Agentic mode.

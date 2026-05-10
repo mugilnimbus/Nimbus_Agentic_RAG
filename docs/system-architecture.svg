@@ -39,7 +39,7 @@
 
   <rect width="1800" height="1320" fill="url(#page)"/>
   <text class="headline" x="56" y="72">Nimbus Local Agentic RAG Architecture</text>
-  <text class="subhead" x="56" y="110">Local-first chat RAG with persistent conversations, full source documents, dense Knowledge Base entries, and dual Qdrant retrieval.</text>
+  <text class="subhead" x="56" y="110">Local-first Fast RAG plus Agentic RAG with persistent chats, read-only tools, full source documents, dense Knowledge Base entries, and dual Qdrant retrieval.</text>
   <rect class="chip" x="1270" y="48" width="430" height="46"/>
   <text class="chip-text" x="1300" y="77">Qdrant · SQLite · Local OpenAI-compatible API</text>
 
@@ -48,7 +48,7 @@
   <text class="lane-title" x="84" y="202">Browser UI</text>
   <rect class="card" x="86" y="232" width="306" height="76"/>
   <text class="title" x="108" y="262">Chat Workspace</text>
-  <text class="text" x="108" y="288">Ask, continue chats, inspect sources</text>
+  <text class="text" x="108" y="288">Fast RAG or Agentic mode</text>
   <rect class="card" x="86" y="328" width="306" height="76"/>
   <text class="title" x="108" y="358">Source Documents</text>
   <text class="text" x="108" y="384">Full extracted document reader</text>
@@ -65,8 +65,8 @@
   <text class="text" x="568" y="286">Static UI + JSON API</text>
   <rect class="card" x="546" y="326" width="316" height="96"/>
   <text class="title" x="568" y="356">API Routes</text>
-  <text class="text" x="568" y="382">/api/ask · /api/documents</text>
-  <text class="text" x="568" y="405">/api/chats · /api/jobs · /api/settings</text>
+  <text class="text" x="568" y="382">/api/ask · /api/agent/ask</text>
+  <text class="text" x="568" y="405">/api/documents · /api/chats · /api/settings</text>
   <rect class="card-green" x="546" y="444" width="316" height="72"/>
   <text class="title" x="568" y="474">Static File Guard</text>
   <text class="text" x="568" y="498">Serves only files under static/</text>
@@ -91,6 +91,8 @@
   <rect class="card-green" x="1386" y="428" width="328" height="76"/>
   <text class="title" x="1408" y="458">KnowledgeBuilder</text>
   <text class="text" x="1408" y="484">Dense distillation from packed sections</text>
+  <rect class="card-amber" x="1016" y="522" width="698" height="24"/>
+  <text class="chip-text" x="1038" y="540">NimbusAgent + AgentToolbox: plan, call read-only tools, observe, then answer</text>
 
   <!-- Middle row ingestion/storage/retrieval -->
   <rect class="lane" x="54" y="632" width="500" height="456"/>
@@ -144,6 +146,7 @@
   <text class="text" x="1308" y="986">Knowledge entries + source chunks</text>
   <rect class="card-amber" x="1286" y="1032" width="428" height="34"/>
   <text class="chip-text" x="1308" y="1054">Final answer cites only used sources</text>
+  <text class="small" x="1308" y="1098">Agentic mode can loop through read-only tools before final answer generation.</text>
 
   <!-- Bottom row -->
   <rect class="lane" x="216" y="1152" width="640" height="104"/>
