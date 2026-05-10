@@ -17,3 +17,5 @@ Update log:
 - Verification: the new agent modules import successfully.
 - Verification: NimbusApplication loads with .env and reports agent_max_steps correctly.
 - Blocked runtime smoke test: Docker Desktop was not running, so the controller could not start the Qdrant container during restart.
+- Follow-up docs update: README now documents Fast RAG vs Agentic mode, /api/agent/ask, agent.py, tools.py, read-only tools, and AGENT_MAX_STEPS.
+- Follow-up docs update: added docs/agentic-flow.svg and refreshed architecture/retrieval diagrams to mention Agentic mode.

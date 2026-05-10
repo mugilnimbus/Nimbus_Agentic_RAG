@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1120" viewBox="0 0 1800 1120" role="img" aria-labelledby="title desc">
+  <title id="title">Nimbus Agentic Flow</title>
+  <desc id="desc">A detailed diagram of the Nimbus agentic answer path: chat memory, planning, validated read-only tools, observations, evidence, stop conditions, and final answer generation.</desc>
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#071018"/>
+      <stop offset="100%" stop-color="#101a26"/>
+    </linearGradient>
+    <filter id="shadow" x="-12%" y="-14%" width="124%" height="132%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000" flood-opacity="0.30"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 1 1 L 10 6 L 1 11 z" fill="#72dce8"/>
+    </marker>
+    <marker id="softArrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 1 1 L 10 6 L 1 11 z" fill="#8aa0b8"/>
+    </marker>
+    <style>
+      .headline { fill: #edf5ff; font: 800 42px Arial, sans-serif; }
+      .subhead { fill: #a4b6cc; font: 400 20px Arial, sans-serif; }
+      .lane { fill: rgba(12, 20, 31, 0.94); stroke: #24394f; stroke-width: 2; rx: 18; filter: url(#shadow); }
+      .lane-title { fill: #7de7f7; font: 800 23px Arial, sans-serif; }
+      .card { fill: #111b28; stroke: #2e455f; stroke-width: 2; rx: 12; }
+      .green { fill: #0c211d; stroke: #168373; stroke-width: 2; rx: 12; }
+      .amber { fill: #211a10; stroke: #8a6422; stroke-width: 2; rx: 12; }
+      .purple { fill: #19182b; stroke: #4b4a85; stroke-width: 2; rx: 12; }
+      .red { fill: #2a1216; stroke: #8f3c4a; stroke-width: 2; rx: 12; }
+      .title { fill: #f3f7ff; font: 800 18px Arial, sans-serif; }
+      .text { fill: #c2ccda; font: 400 15px Arial, sans-serif; }
+      .small { fill: #94a8bf; font: 400 13px Arial, sans-serif; }
+      .chip { fill: #0b141f; stroke: #2f4a65; stroke-width: 1.6; rx: 22; }
+      .chip-text { fill: #88e8fb; font: 700 14px Arial, sans-serif; }
+      .flow { stroke: #72dce8; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .soft-flow { stroke: #8aa0b8; stroke-width: 2.2; fill: none; marker-end: url(#softArrow); stroke-dasharray: 8 8; }
+      .label { fill: #9eb1c8; font: 700 13px Arial, sans-serif; }
+      .num { fill: #061018; font: 800 16px Arial, sans-serif; }
+      .circle { fill: #70dce8; }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1120" fill="url(#page)"/>
+  <text class="headline" x="56" y="72">Nimbus Agentic Answer Flow</text>
+  <text class="subhead" x="56" y="110">How Agentic mode plans read-only tools, gathers evidence, and generates a grounded answer without hard-coded task fixes.</text>
+  <rect class="chip" x="1280" y="48" width="430" height="46"/>
+  <text class="chip-text" x="1310" y="77">Structured JSON tools · bounded loop · cited answer</text>
+
+  <rect class="lane" x="54" y="156" width="1692" height="206"/>
+  <text class="lane-title" x="84" y="198">1. Request and Memory</text>
+  <rect class="card" x="88" y="232" width="320" height="86"/>
+  <circle class="circle" cx="116" cy="260" r="14"/><text class="num" x="111" y="266">1</text>
+  <text class="title" x="142" y="262">User Chooses Agentic Mode</text>
+  <text class="text" x="110" y="292">Browser posts to /api/agent/ask</text>
+  <rect class="card" x="492" y="232" width="320" height="86"/>
+  <circle class="circle" cx="520" cy="260" r="14"/><text class="num" x="515" y="266">2</text>
+  <text class="title" x="546" y="262">Application Loads Chat</text>
+  <text class="text" x="514" y="292">ChatStore + ChatMemory from SQLite</text>
+  <rect class="green" x="896" y="232" width="360" height="86"/>
+  <circle class="circle" cx="924" cy="260" r="14"/><text class="num" x="919" y="266">3</text>
+  <text class="title" x="950" y="262">Agent Receives Context</text>
+  <text class="text" x="918" y="292">Question, recent turns, focus clues</text>
+  <rect class="amber" x="1340" y="232" width="360" height="86"/>
+  <text class="title" x="1364" y="262">Step Budget</text>
+  <text class="text" x="1364" y="292">AGENT_MAX_STEPS limits tool calls</text>
+  <path class="flow" d="M 408 275 L 492 275"/>
+  <path class="flow" d="M 812 275 L 896 275"/>
+  <path class="flow" d="M 1256 275 L 1340 275"/>
+
+  <rect class="lane" x="54" y="410" width="780" height="500"/>
+  <text class="lane-title" x="84" y="452">2. Planning Loop</text>
+  <rect class="purple" x="92" y="490" width="316" height="96"/>
+  <circle class="circle" cx="120" cy="518" r="14"/><text class="num" x="115" y="524">4</text>
+  <text class="title" x="146" y="520">Ask LLM for Next Action</text>
+  <text class="text" x="114" y="550">Prompt includes tools and observations</text>
+  <rect class="card" x="478" y="490" width="316" height="96"/>
+  <circle class="circle" cx="506" cy="518" r="14"/><text class="num" x="501" y="524">5</text>
+  <text class="title" x="532" y="520">Structured Decision</text>
+  <text class="text" x="500" y="550">{"action":"tool"} or {"action":"final"}</text>
+  <rect class="green" x="92" y="654" width="316" height="96"/>
+  <circle class="circle" cx="120" cy="682" r="14"/><text class="num" x="115" y="688">6</text>
+  <text class="title" x="146" y="684">Validate Tool Call</text>
+  <text class="text" x="114" y="714">Known tool, safe args, read-only operation</text>
+  <rect class="red" x="478" y="654" width="316" height="96"/>
+  <text class="title" x="502" y="684">Invalid or Unknown</text>
+  <text class="text" x="502" y="714">Store failed observation, continue or final</text>
+  <rect class="amber" x="286" y="806" width="316" height="64"/>
+  <text class="title" x="310" y="832">Stop Conditions</text>
+  <text class="text" x="310" y="854">final action, step limit, invalid decision, or no more useful tools</text>
+  <path class="flow" d="M 408 538 L 478 538"/>
+  <path class="flow" d="M 636 586 C 636 626, 250 618, 250 654"/>
+  <path class="soft-flow" d="M 636 586 L 636 654"/>
+  <path class="flow" d="M 250 750 C 250 790, 350 790, 386 806"/>
+  <path class="soft-flow" d="M 636 750 C 636 790, 538 790, 502 806"/>
+
+  <rect class="lane" x="914" y="410" width="832" height="500"/>
+  <text class="lane-title" x="944" y="452">3. Read-Only Agent Tools</text>
+  <rect class="green" x="952" y="490" width="340" height="82"/>
+  <text class="title" x="978" y="522">search_knowledge</text>
+  <text class="text" x="978" y="548">Qdrant Knowledge Base dense entries</text>
+  <rect class="green" x="1368" y="490" width="340" height="82"/>
+  <text class="title" x="1394" y="522">search_source</text>
+  <text class="text" x="1394" y="548">Qdrant semantic source chunks</text>
+  <rect class="card" x="952" y="610" width="340" height="82"/>
+  <text class="title" x="978" y="642">list_documents</text>
+  <text class="text" x="978" y="668">SQLite Source Document metadata</text>
+  <rect class="card" x="1368" y="610" width="340" height="82"/>
+  <text class="title" x="1394" y="642">open_source_document</text>
+  <text class="text" x="1394" y="668">Full extracted document text by id</text>
+  <rect class="card" x="952" y="730" width="340" height="82"/>
+  <text class="title" x="978" y="762">inspect_settings</text>
+  <text class="text" x="978" y="788">Model, embedding, Qdrant, processing config</text>
+  <rect class="purple" x="1368" y="730" width="340" height="82"/>
+  <text class="title" x="1394" y="762">Observation Store</text>
+  <text class="text" x="1394" y="788">Tool result text + collected source payloads</text>
+  <path class="flow" d="M 794 702 C 858 702, 890 532, 952 532"/>
+  <path class="flow" d="M 1292 532 L 1368 532"/>
+  <path class="flow" d="M 1292 652 L 1368 652"/>
+  <path class="flow" d="M 1292 772 L 1368 772"/>
+
+  <rect class="lane" x="260" y="956" width="1280" height="112"/>
+  <text class="lane-title" x="290" y="996">4. Final Grounded Answer</text>
+  <text class="text" x="290" y="1028">Final prompt receives chat memory, agent observations, and evidence snippets. It cites only used evidence, labels inference, and avoids hard-coded domain answers.</text>
+  <path class="flow" d="M 444 870 C 444 930, 700 930, 760 956"/>
+  <path class="flow" d="M 1538 812 C 1538 910, 1120 920, 1040 956"/>
+  <text class="small" x="56" y="1094">Safety boundary: current agent tools are read-only. Write, delete, rebuild, or system-control actions should require explicit confirmation before becoming tools.</text>
+</svg>

@@ -1,11 +1,11 @@
 # Nimbus Vector RAG
 
-A local RAG system with a dark web UI. SQLite stores Source Documents as full
-extracted text for reading. Qdrant stores two vector collections: compact
-LLM-built Knowledge Base entries and semantic Source Base chunks used as
-fallback evidence. The app rewrites each chat question into retrieval keywords,
-searches both vector stores, reranks the candidates, and sends grounded context
-to an OpenAI-compatible LM Studio endpoint.
+A local agentic RAG system with a dark web UI. SQLite stores Source Documents
+as full extracted text for reading. Qdrant stores two vector collections:
+compact LLM-built Knowledge Base entries and semantic Source Base chunks used
+as fallback evidence. The app can answer through a fast RAG path or through an
+agentic tool loop that plans read-only searches, gathers evidence, and then
+generates a grounded answer through an OpenAI-compatible LM Studio endpoint.
 
 ## Architecture
 
@@ -35,6 +35,7 @@ Python HTTP Server: app.py -> nimbus/server.py
       |-- POST   /api/documents
       |-- POST   /api/documents/{id}/build-knowledge
       |-- POST   /api/ask
+      |-- POST   /api/agent/ask
       |-- POST   /api/rebuild-knowledge
       |-- DELETE /api/documents/{id}
   |
@@ -42,10 +43,14 @@ Python HTTP Server: app.py -> nimbus/server.py
 Nimbus package: nimbus/
   |
   |-- server.py: API routes and app settings
+  |-- application.py: runtime orchestration, settings, jobs, chats, RAG and agent paths
+  |-- agent.py: bounded agent loop for planning tools, collecting observations, and final answers
+  |-- tools.py: modular read-only agent tool registry
   |-- extraction.py: file parsing, PDF text extraction, base64 validation
   |-- jobs.py: in-memory background job queue and progress tracking
-  |-- prompts.py: project prompting policy and LLM prompts for Knowledge Base building, image extraction, rewriting, answers
+  |-- prompts.py: project prompting policy and LLM prompts for Knowledge Base building, image extraction, retrieval, answers, and agent decisions
   |-- rag.py: RAG core, Source Document store, Qdrant vector stores, LM Studio calls
+  |-- answer_engine.py: fast RAG query rewrite, expansion, reranking, and answer generation
   |-- source_chunks.py: semantic Source Base chunk indexing into Qdrant
   |
   v
@@ -151,6 +156,25 @@ store Knowledge Base points with readable information payloads
 
 ## Question Answering Flow
 
+Nimbus has two chat answer modes:
+
+```text
+Fast RAG
+  POST /api/ask
+  -> query rewrite
+  -> query expansion
+  -> Knowledge Base + Source chunk retrieval
+  -> optional LLM rerank
+  -> final grounded answer
+
+Agentic
+  POST /api/agent/ask
+  -> bounded tool-planning loop
+  -> read-only tool execution
+  -> observations + evidence collection
+  -> final grounded answer
+```
+
 ```text
 User question
   |
@@ -190,6 +214,64 @@ Chats are persisted in SQLite at `data/chats.sqlite`. The answer engine passes
 recent turns from the selected chat as conversation context, which helps
 follow-up questions resolve the previous subject without turning old answers
 into evidence. Grounding still comes from the Knowledge Base and Source Base.
+
+## Agentic Flow
+
+![Nimbus agentic flow](docs/agentic-flow.svg)
+
+Agentic mode adds a controlled planning layer on top of retrieval. The model
+does not directly run code or change the system. It returns structured JSON
+tool decisions, and the backend validates the requested tool and arguments
+before executing the read-only operation.
+
+```text
+User asks in Agentic mode
+  |
+  v
+NimbusApplication loads chat memory
+  |
+  v
+NimbusAgent asks the LLM for the next action
+  |
+  |-- {"action":"tool", "tool":"search_knowledge", "arguments":{...}}
+  |-- {"action":"tool", "tool":"search_source", "arguments":{...}}
+  |-- {"action":"tool", "tool":"list_documents", "arguments":{...}}
+  |-- {"action":"tool", "tool":"open_source_document", "arguments":{...}}
+  |-- {"action":"tool", "tool":"inspect_settings", "arguments":{...}}
+  |-- {"action":"final"}
+  |
+  v
+AgentToolbox validates and executes read-only tools
+  |
+  v
+NimbusAgent stores observations and source evidence
+  |
+  v
+Loop continues until the model chooses final or AGENT_MAX_STEPS is reached
+  |
+  v
+Final answer prompt receives chat memory, observations, and evidence snippets
+```
+
+The agent currently exposes these read-only tools:
+
+| Tool | Purpose |
+| --- | --- |
+| `search_knowledge` | Search compact distilled Knowledge Base entries. |
+| `search_source` | Search semantic Source Document chunks for raw fallback evidence. |
+| `list_documents` | List uploaded Source Documents. |
+| `open_source_document` | Open full extracted text for one Source Document by id. |
+| `inspect_settings` | Inspect runtime model, embedding, retrieval, and processing settings. |
+
+Tool-loop depth is controlled by:
+
+```text
+AGENT_MAX_STEPS=6
+```
+
+The prompt policy in `nimbus/prompts.py` applies to both Fast RAG and Agentic
+mode: fixes should be general technical or prompt-engineering improvements, not
+hard-coded answers for a specific product, file, number, or user question.
 
 ## Retrieval
 
@@ -546,6 +628,7 @@ EXTRACTION_WORKERS=12
 CHAT_MEMORY_TURNS=24
 CHAT_MEMORY_SUMMARY_CHARS=700
 CHAT_MEMORY_MESSAGE_CHARS=4000
+AGENT_MAX_STEPS=6
 VECTOR_BACKEND=qdrant
 QDRANT_URL=http://127.0.0.1:6333
 QDRANT_PORT=6333

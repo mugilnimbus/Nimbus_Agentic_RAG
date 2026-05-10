@@ -41,7 +41,7 @@
 
   <rect width="1800" height="1420" fill="url(#page)"/>
   <text class="headline" x="56" y="72">Nimbus Data Flow and Retrieval Pipeline</text>
-  <text class="subhead" x="56" y="110">How documents become searchable evidence, and how a chat question becomes a grounded answer.</text>
+  <text class="subhead" x="56" y="110">How documents become searchable evidence, and how Fast RAG or Agentic mode turns a chat question into a grounded answer.</text>
   <rect class="chip" x="1270" y="48" width="430" height="46"/>
   <text class="chip-text" x="1300" y="77">Full source text · Dense KB · Dual vector search</text>
 
@@ -119,13 +119,13 @@
 
   <!-- Runtime path -->
   <rect class="lane" x="54" y="748" width="1692" height="520"/>
-  <text class="lane-title" x="84" y="790">B. Chat Retrieval and Answer Path</text>
+  <text class="lane-title" x="84" y="790">B. Fast RAG Retrieval and Answer Path</text>
 
   <rect class="card" x="86" y="830" width="282" height="104"/>
   <circle class="circle" cx="114" cy="858" r="14"/><text class="num" x="109" y="864">1</text>
   <text class="title" x="140" y="860">User Question</text>
   <text class="text" x="108" y="890">Selected chat session</text>
-  <text class="small" x="108" y="912">POST /api/ask</text>
+  <text class="small" x="108" y="912">POST /api/ask or /api/agent/ask</text>
 
   <rect class="card" x="424" y="830" width="282" height="104"/>
   <circle class="circle" cx="452" cy="858" r="14"/><text class="num" x="447" y="864">2</text>
@@ -199,5 +199,5 @@
   <path class="soft-flow" d="M 900 650 C 900 760, 425 892, 425 1006"/>
   <path class="soft-flow" d="M 900 650 C 900 762, 815 886, 815 1006"/>
 
-  <text class="small" x="56" y="1394">Prompting policy: general-purpose behavior, no hard-coded product/question fixes. Retrieval quality comes from dense storage, query rewriting, dual vector search, reranking, and grounded answer prompts.</text>
+  <text class="small" x="56" y="1394">Prompting policy: general-purpose behavior, no hard-coded product/question fixes. Agentic mode adds a bounded read-only tool loop before final grounded answer generation.</text>
 </svg>
