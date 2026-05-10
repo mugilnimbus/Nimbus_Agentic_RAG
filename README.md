@@ -1,323 +1,173 @@
-# Nimbus Vector RAG
+# Nimbus Agentic RAG
 
-A local agentic RAG system with a dark web UI. SQLite stores Source Documents
-as full extracted text for reading. Qdrant stores two vector collections:
-compact LLM-built Knowledge Base entries and semantic Source Base chunks used
-as fallback evidence. The app can answer through a fast RAG path or through an
-agentic tool loop that plans read-only searches, gathers evidence, and then
-generates a grounded answer through an OpenAI-compatible LM Studio endpoint.
+Nimbus is a local-first agentic RAG application for building a private knowledge
+workspace from your own documents. It stores full source documents for reading,
+builds dense knowledge entries for retrieval, keeps persistent chat history, and
+can answer through either a fast RAG pipeline or a controlled agentic workflow.
+
+The system is designed to run with:
+
+- A local OpenAI-compatible model server such as LM Studio
+- Qdrant for vector search
+- SQLite for local document and chat storage
+- A browser UI served by the Python backend
+
+## What Nimbus Does
+
+- Upload or paste source material: text, Markdown, CSV, JSON, logs, PDFs, and images.
+- Store full extracted source text in SQLite so documents remain readable in the UI.
+- Create semantic source chunks and store them in Qdrant for fallback evidence.
+- Build compact Knowledge Base entries with an LLM and store them in a separate Qdrant collection.
+- Keep multiple persistent chats with rename and delete support.
+- Answer from the current chat context, Knowledge Base evidence, and Source Base evidence.
+- Let you choose between Fast RAG and Agentic mode per question.
+- Show answer sources and expandable agent steps in the UI.
+- Manage Nimbus and Qdrant with cross-platform controller scripts.
 
 ## Architecture
 
 ![Nimbus system architecture](docs/system-architecture.svg)
 
+Nimbus has four major layers:
+
+| Layer | Responsibility |
+| --- | --- |
+| Browser UI | Uploads, chats, settings, source document reading, Knowledge Base inspection, answer mode selection |
+| HTTP server | Static file serving and JSON API routes |
+| Application services | Chat orchestration, RAG, agent loop, job queue, settings, ingestion |
+| Storage and models | SQLite, Qdrant, local OpenAI-compatible chat, vision, and embedding models |
+
+Main runtime path:
+
 ```text
 Browser UI
-  |
-  |  upload files / manage chats / ask questions / inspect sources
-  v
-Python HTTP Server: app.py -> nimbus/server.py
-  |
-  |-- Static UI: static/index.html, app.js, styles.css
-  |
-  |-- API
-      |-- GET    /api/health
-      |-- GET    /api/chats
-      |-- GET    /api/chats/{id}/messages
-      |-- GET    /api/documents
-      |-- GET    /api/documents/{id}/chunks
-      |-- GET    /api/search
-      |-- GET    /api/knowledge
-      |-- GET    /api/jobs
-      |-- POST   /api/chats
-      |-- POST   /api/chats/{id}/rename
-      |-- POST   /api/chats/{id}/delete
-      |-- POST   /api/documents
-      |-- POST   /api/documents/{id}/build-knowledge
-      |-- POST   /api/ask
-      |-- POST   /api/agent/ask
-      |-- POST   /api/rebuild-knowledge
-      |-- DELETE /api/documents/{id}
-  |
-  v
-Nimbus package: nimbus/
-  |
-  |-- server.py: API routes and app settings
-  |-- application.py: runtime orchestration, settings, jobs, chats, RAG and agent paths
-  |-- agent.py: bounded agent loop for planning tools, collecting observations, and final answers
-  |-- tools.py: modular read-only agent tool registry
-  |-- extraction.py: file parsing, PDF text extraction, base64 validation
-  |-- jobs.py: in-memory background job queue and progress tracking
-  |-- prompts.py: project prompting policy and LLM prompts for Knowledge Base building, image extraction, retrieval, answers, and agent decisions
-  |-- rag.py: RAG core, Source Document store, Qdrant vector stores, LM Studio calls
-  |-- answer_engine.py: fast RAG query rewrite, expansion, reranking, and answer generation
-  |-- source_chunks.py: semantic Source Base chunk indexing into Qdrant
-  |
-  v
-SQLite DB: data/rag.sqlite
-  |
-  |-- documents table
-  |-- full extracted source text for frontend reading
-  |
-  v
-Qdrant Vector DB
-  configured by QDRANT_URL
-  knowledge collection configured by QDRANT_COLLECTION
-  source chunk collection configured by QDRANT_SOURCE_COLLECTION
-  |
-  |-- Knowledge Base entry vectors built from keywords
-  |-- Source Base semantic chunk vectors built from keywords
-  |-- payload: document id, file name, keywords, information, source section
-  |
-  v
-LM Studio OpenAI-compatible endpoint
-configured by OPENAI_BASE_URL
-model configured by OPENAI_MODEL
-image extraction model configured by IMAGE_MODEL
+  -> nimbus/server.py
+  -> NimbusApplication
+  -> Fast RAG path or Agentic path
+  -> Qdrant + SQLite + local model endpoint
+  -> answer with sources
 ```
 
-## Data Stores
-
-There are three logical stores in the app:
-
-```text
-Source Documents
-  Stores full cleaned source text in SQLite.
-  Used by the Source Documents frontend view.
-
-Knowledge Base
-  Stores LLM-generated English entries distilled from large semantic source sections.
-  Each point vector is built from keywords.
-  Each payload stores keywords, information, document name, source section,
-  embedding model, and prompt version.
-
-Source Base chunks
-  Stores semantic source chunks in Qdrant using the same payload shape.
-  Used as fallback evidence and confirmation for final answers.
-```
-
-## Ingestion Flow
-
-```text
-User uploads/pastes content
-  |
-  v
-POST /api/documents
-  |
-  |-- text/log/csv/md/json
-  |     -> English filter
-  |     -> store full extracted text in SQLite
-  |     -> semantic chunk by headings, tables, lists, code, and paragraphs
-  |     -> embed source chunk keywords into Qdrant
-  |     -> optional Knowledge Base entries
-  |
-  |-- PDF
-  |     -> pypdf text extraction
-  |     -> English filter
-  |     -> store full extracted text in SQLite
-  |     -> semantic chunk by document structure
-  |     -> embed source chunk keywords into Qdrant
-  |     -> optional Knowledge Base entries
-  |
-  |-- image
-      -> send image to the configured IMAGE_MODEL
-      -> extract Source Document observations
-      -> store full extracted text in SQLite
-      -> semantic chunk and embed source chunk keywords into Qdrant
-      -> build Knowledge Base entries
-```
-
-Supported uploads include images (`.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`,
-`.bmp`), PDFs, and plain text-style files such as `.txt`, `.md`, `.csv`, `.json`,
-and `.log`.
-
-## Knowledge Base Build Flow
-
-```text
-Raw document
-  |
-  v
-split into large semantic sections within the configured model budget
-  |
-  v
-send batches to LM Studio
-  KNOWLEDGE_CONCURRENCY=1 by default
-  |
-  v
-LLM produces JSON Knowledge Base entries
-  compact notes, tables, bullets, trees, procedures, or summaries
-  |
-  v
-embed each Knowledge Base entry's keywords
-  |
-  v
-store Knowledge Base points with readable information payloads
-```
-
-## Question Answering Flow
-
-Nimbus has two chat answer modes:
-
-```text
-Fast RAG
-  POST /api/ask
-  -> query rewrite
-  -> query expansion
-  -> Knowledge Base + Source chunk retrieval
-  -> optional LLM rerank
-  -> final grounded answer
-
-Agentic
-  POST /api/agent/ask
-  -> bounded tool-planning loop
-  -> read-only tool execution
-  -> observations + evidence collection
-  -> final grounded answer
-```
-
-```text
-User question
-  |
-  v
-Attach persistent chat session context
-  selected chat's recent user/assistant turns
-  |
-  v
-LLM query rewrite
-  Example:
-  "what is my laptops cpu?"
-  ->
-  "laptop cpu central processing unit processor model system information..."
-  |
-  v
-Search both:
-  - rewritten query
-  - original question
-  |
-  v
-Search Qdrant Knowledge Base and Qdrant Source Base chunks
-  |
-  v
-Merge useful candidates from both stores
-  |
-  v
-Build grounded context
-  |
-  v
-Send context + question to the configured chat model
-  |
-  v
-Return answer + source dropdowns
-```
-
-Chats are persisted in SQLite at `data/chats.sqlite`. The answer engine passes
-recent turns from the selected chat as conversation context, which helps
-follow-up questions resolve the previous subject without turning old answers
-into evidence. Grounding still comes from the Knowledge Base and Source Base.
-
-## Agentic Flow
-
-![Nimbus agentic flow](docs/agentic-flow.svg)
-
-Agentic mode adds a controlled planning layer on top of retrieval. The model
-does not directly run code or change the system. It returns structured JSON
-tool decisions, and the backend validates the requested tool and arguments
-before executing the read-only operation.
-
-```text
-User asks in Agentic mode
-  |
-  v
-NimbusApplication loads chat memory
-  |
-  v
-NimbusAgent asks the LLM for the next action
-  |
-  |-- {"action":"tool", "tool":"search_knowledge", "arguments":{...}}
-  |-- {"action":"tool", "tool":"search_source", "arguments":{...}}
-  |-- {"action":"tool", "tool":"list_documents", "arguments":{...}}
-  |-- {"action":"tool", "tool":"open_source_document", "arguments":{...}}
-  |-- {"action":"tool", "tool":"inspect_settings", "arguments":{...}}
-  |-- {"action":"final"}
-  |
-  v
-AgentToolbox validates and executes read-only tools
-  |
-  v
-NimbusAgent stores observations and source evidence
-  |
-  v
-Loop continues until the model chooses final or AGENT_MAX_STEPS is reached
-  |
-  v
-Final answer prompt receives chat memory, observations, and evidence snippets
-```
-
-The agent currently exposes these read-only tools:
-
-| Tool | Purpose |
-| --- | --- |
-| `search_knowledge` | Search compact distilled Knowledge Base entries. |
-| `search_source` | Search semantic Source Document chunks for raw fallback evidence. |
-| `list_documents` | List uploaded Source Documents. |
-| `open_source_document` | Open full extracted text for one Source Document by id. |
-| `inspect_settings` | Inspect runtime model, embedding, retrieval, and processing settings. |
-
-Tool-loop depth is controlled by:
-
-```text
-AGENT_MAX_STEPS=6
-```
-
-The prompt policy in `nimbus/prompts.py` applies to both Fast RAG and Agentic
-mode: fixes should be general technical or prompt-engineering improvements, not
-hard-coded answers for a specific product, file, number, or user question.
-
-## Retrieval
+## Data And Retrieval Flow
 
 ![Nimbus data and retrieval flow](docs/data-retrieval-flow.svg)
 
-The system uses semantic embeddings from LM Studio and stores them in Qdrant.
+Nimbus separates full source storage from semantic retrieval storage.
+
+| Store | Technology | Contents | Purpose |
+| --- | --- | --- | --- |
+| Source Documents | SQLite `data/rag.sqlite` | Full cleaned extracted text and document metadata | Frontend document reader and full-document access |
+| Chats | SQLite `data/chats.sqlite` | Chat sessions, messages, stored sources | Persistent conversations |
+| Knowledge Base | Qdrant `QDRANT_COLLECTION` | Dense LLM-distilled entries embedded from keywords | Primary compact retrieval |
+| Source chunks | Qdrant `QDRANT_SOURCE_COLLECTION` | Semantic source chunks embedded from keywords | Raw fallback evidence |
+
+## Agentic Workflow
+
+![Nimbus agentic flow](docs/agentic-flow.svg)
+
+Agentic mode adds a bounded tool loop before final answer generation. The LLM
+does not directly run code or change the system. It returns structured JSON
+tool decisions, and Nimbus validates and executes those tools in the backend.
+
+Current agent tools are read-only:
+
+| Tool | Purpose |
+| --- | --- |
+| `search_knowledge` | Search compact Knowledge Base entries |
+| `search_source` | Search semantic Source Base chunks |
+| `list_documents` | List uploaded Source Documents |
+| `open_source_document` | Open full extracted text for one Source Document |
+| `inspect_settings` | Inspect runtime model, embedding, Qdrant, and processing settings |
+
+Agentic mode stops when:
+
+- The model returns `{"action":"final"}`
+- `AGENT_MAX_STEPS` is reached
+- The model returns an invalid decision
+- No more useful read-only tool calls are needed
+
+If the agent reaches final answer generation without collected sources, Nimbus
+performs a default evidence pass against both Knowledge Base and Source chunks.
+
+## Fast RAG Versus Agentic Mode
+
+| Mode | Endpoint | Best for | Flow |
+| --- | --- | --- | --- |
+| Fast RAG | `POST /api/ask` | Quick grounded answers | Rewrite query, expand query, search both Qdrant collections, rerank, answer |
+| Agentic | `POST /api/agent/ask` | Multi-step investigation, broad document questions, uncertain retrieval | Plan tool, execute tool, observe, repeat, answer |
+
+Both modes use persistent chat context. Previous chat messages clarify follow-up
+questions, but source grounding still comes from retrieved Knowledge Base or
+Source Base evidence.
+
+## Requirements
+
+- Python 3.10 or newer
+- Docker Desktop or another Docker runtime for Qdrant
+- A local OpenAI-compatible API server
+- A chat model
+- An embedding model
+- Optional: an image-capable model for image extraction
+
+The Python dependency list is intentionally small:
 
 ```text
-Knowledge Base entry keywords
-  -> /v1/embeddings
-  -> configured embedding model
-  -> normalize
-  -> Qdrant point vector
-  -> payload stores readable information and source metadata
+pypdf>=5.0.0
 ```
 
-At search time:
+## Quick Start
+
+Clone the project:
+
+```powershell
+git clone https://github.com/mugilnimbus/Nimbus_Agentic_RAG.git
+cd Nimbus_Agentic_RAG
+```
+
+Create your runtime config:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env` for your local model server. The most important values are:
+
+```env
+OPENAI_BASE_URL=http://127.0.0.1:1234/v1
+OPENAI_MODEL=<chat-model-name>
+IMAGE_MODEL=<image-capable-chat-model-name>
+EMBEDDING_MODEL=<embedding-model-name>
+OPENAI_API_KEY=local-key
+QDRANT_URL=http://127.0.0.1:6333
+```
+
+Install dependencies:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+Start Docker Desktop, start your local model server, then start Nimbus:
+
+```powershell
+.\scripts\nimbusctl.ps1 start
+```
+
+Open the app:
 
 ```text
-Qdrant semantic vector similarity in both collections
-+ small lexical overlap score
-+ LLM reranking
-= ranked Knowledge Base entries and Source Base chunks
+http://localhost:8000
 ```
 
-SQLite is still used because it is excellent for local document metadata and
-full-document inspection. It does not own embeddings anymore. Qdrant is the true
-vector database used for similarity search. Existing Source Documents can be
-rebuilt into both Qdrant collections through `POST /api/rebuild-knowledge`.
+Open Qdrant dashboard:
 
-## Qdrant Setup
+```text
+http://localhost:6333/dashboard
+```
 
-Qdrant is the vector database for the Knowledge Base. Start it before building
-or searching the Knowledge Base.
+## Running On Different Platforms
 
-## System Control
-
-Use the project controller to start, stop, restart, and inspect the whole local
-system. It manages:
-
-- Nimbus web server
-- Docker Qdrant container
-- runtime PID file
-- stdout/stderr logs under `data/runtime/`
-
-From PowerShell:
+Windows PowerShell:
 
 ```powershell
 .\scripts\nimbusctl.ps1 status
@@ -326,16 +176,7 @@ From PowerShell:
 .\scripts\nimbusctl.ps1 restart
 ```
 
-Cross-platform controller for Windows, macOS, and Linux:
-
-```bash
-python scripts/nimbusctl.py status
-python scripts/nimbusctl.py start
-python scripts/nimbusctl.py stop
-python scripts/nimbusctl.py restart
-```
-
-From Command Prompt:
+Windows Command Prompt:
 
 ```cmd
 nimbus status
@@ -344,22 +185,13 @@ nimbus stop
 nimbus restart
 ```
 
-Start only Qdrant:
+Cross-platform Python controller:
 
-```powershell
-.\scripts\nimbusctl.ps1 start-qdrant
-```
-
-Stop only Qdrant:
-
-```powershell
-.\scripts\nimbusctl.ps1 stop-qdrant
-```
-
-Stop Nimbus but keep Qdrant running:
-
-```powershell
-.\scripts\nimbusctl.ps1 stop -KeepQdrant
+```bash
+python scripts/nimbusctl.py status
+python scripts/nimbusctl.py start
+python scripts/nimbusctl.py stop
+python scripts/nimbusctl.py restart
 ```
 
 Run Nimbus in the foreground for debugging:
@@ -368,51 +200,27 @@ Run Nimbus in the foreground for debugging:
 .\scripts\nimbusctl.ps1 start -Foreground
 ```
 
-The older convenience scripts still work:
+Stop Nimbus but keep Qdrant running:
 
 ```powershell
-.\scripts\start_all.ps1
-.\scripts\stop_all.ps1
-.\scripts\restart_all.ps1
-.\scripts\status.ps1
+.\scripts\nimbusctl.ps1 stop -KeepQdrant
 ```
 
-### Option A: Project Script
-
-If Docker Desktop is installed and running, the simplest path is:
+Start or stop only Qdrant:
 
 ```powershell
-.\scripts\start_qdrant.ps1
+.\scripts\nimbusctl.ps1 start-qdrant
+.\scripts\nimbusctl.ps1 stop-qdrant
 ```
 
-Or start Qdrant and Nimbus together:
+## Manual Qdrant Setup
 
-```powershell
-.\scripts\start_all.ps1
-```
-
-The scripts read these values from `.env`:
-
-```text
-QDRANT_URL=http://127.0.0.1:6333
-QDRANT_PORT=6333
-QDRANT_COLLECTION=nimbus_knowledge_base
-QDRANT_SOURCE_COLLECTION=nimbus_source_chunks
-QDRANT_RUNTIME=docker
-QDRANT_CONTAINER_NAME=nimbus-qdrant
-QDRANT_DOCKER_IMAGE=qdrant/qdrant:latest
-QDRANT_DOCKER_VOLUME=nimbus_qdrant_storage
-```
-
-### Option B: Manual Docker Commands
-
-Create a persistent Docker volume:
+The controller can create and start the Qdrant container automatically. To do it
+manually instead:
 
 ```powershell
 docker volume create nimbus_qdrant_storage
 ```
-
-Start Qdrant:
 
 ```powershell
 docker run -d `
@@ -423,212 +231,140 @@ docker run -d `
   qdrant/qdrant:latest
 ```
 
-Verify it is running:
-
-```powershell
-docker ps --filter "name=nimbus-qdrant"
-```
-
-Check the Qdrant API:
+Check Qdrant:
 
 ```powershell
 Invoke-WebRequest http://127.0.0.1:6333/collections -UseBasicParsing
 ```
 
-Open the Qdrant dashboard:
+## Using The UI
+
+1. Start Nimbus and open `http://localhost:8000`.
+2. Add knowledge from the left sidebar.
+3. Upload a file or paste text.
+4. Choose whether to build the Knowledge Base immediately.
+5. Use the `Chat`, `Knowledge Base`, and `Source Documents` views from the top bar.
+6. In the chat composer, choose `Fast RAG` or `Agentic`.
+7. Ask a question.
+8. Expand `Sources` to inspect the evidence used.
+9. In Agentic mode, expand `Agent steps` to inspect tool calls.
+
+### Source Documents View
+
+The Source Documents view reads full extracted document text from SQLite. It is
+for human inspection and document-level operations.
+
+### Knowledge Base View
+
+The Knowledge Base view reads Qdrant Knowledge Base entries. It shows compact
+LLM-distilled information, source metadata, and keywords.
+
+### Operations
+
+Background jobs appear in the Operations panel. Ingestion and Knowledge Base
+builds run there instead of writing job-status messages into chat.
+
+## Ingestion Pipeline
 
 ```text
-http://localhost:6333/dashboard
+Upload or paste content
+  -> extract text
+  -> clean and normalize text
+  -> store full Source Document in SQLite
+  -> create semantic source chunks
+  -> embed source chunk keywords into Qdrant Source collection
+  -> optionally build dense Knowledge Base entries
+  -> embed Knowledge Base entry keywords into Qdrant Knowledge collection
 ```
 
-### Docker Maintenance
+Supported source types:
 
-Stop Qdrant:
+- Plain text
+- Markdown
+- CSV
+- JSON
+- Logs
+- PDF
+- Images: PNG, JPG, JPEG, WebP, GIF, BMP
 
-```powershell
-docker stop nimbus-qdrant
-```
+PDF text extraction uses `pypdf`. Image extraction is sent to the configured
+`IMAGE_MODEL`.
 
-Start it again:
+## Knowledge Base Build Pipeline
 
-```powershell
-docker start nimbus-qdrant
-```
-
-Remove the container but keep the stored vectors:
-
-```powershell
-docker rm -f nimbus-qdrant
-```
-
-Delete all Qdrant vector data:
-
-```powershell
-docker rm -f nimbus-qdrant
-docker volume rm nimbus_qdrant_storage
-```
-
-After deleting the volume, create it again and rerun the `docker run` command.
-
-Qdrant must be running for semantic retrieval. SQLite no longer stores vectors,
-so it is not a semantic-search fallback.
-
-## UI
+Nimbus builds the Knowledge Base from the full source text stored in SQLite.
 
 ```text
-Web interface
-  |
-  |-- left sidebar
-  |     |-- upload / paste / index
-  |     |-- persistent chat list
-  |     |-- chat rename/delete actions
-  |     |-- background operations
-  |
-  |-- top view switch
-  |     |-- Chat
-  |     |-- Knowledge Base
-  |     |-- Source Documents
-  |
-  |-- chat area
-        |-- user/assistant bubbles
-        |-- source dropdown per answer
-        |-- rendered Markdown for Knowledge Base entries and Source Base chunks
+Full Source Document
+  -> semantic sections
+  -> packed model-budget groups
+  -> LLM dense distillation
+  -> compact JSON entries
+  -> keyword embeddings
+  -> Qdrant Knowledge Base points
 ```
 
-## Main Files
+The Knowledge Base prompt is designed to keep information dense. Tables,
+specifications, procedures, warnings, logs, code snippets, and related details
+stay together whenever possible.
+
+## Retrieval Pipeline
+
+Fast RAG uses this flow:
 
 ```text
-app.py
-  small entrypoint that starts Nimbus
-
-nimbus/server.py
-  HTTP handler and API routing only
-
-nimbus/application.py
-  Application service object, settings, background task wiring, chat flow
-
-nimbus/answer_engine.py
-  Query rewrite, follow-up handling, context selection, reranking, answer formatting
-
-nimbus/extraction.py
-  file parsing, image/PDF dispatch, concurrent PDF page extraction
-
-nimbus/chat_memory.py
-  Small in-memory rolling chat memory and focus tracking
-
-nimbus/chat_store.py
-  Persistent SQLite chat sessions and message history
-
-nimbus/jobs.py
-  in-memory job queue, serialized execution, progress state
-
-nimbus/knowledge.py
-  Knowledge Base build orchestration from large semantic source sections
-
-nimbus/llm.py
-  OpenAI-compatible chat and embedding client
-
-nimbus/models.py
-  Shared data models
-
-nimbus/text_processing.py
-  text normalization, English filtering, semantic chunking, stable hashes
-
-nimbus/knowledge_parser.py
-  parser for LLM-produced Knowledge Base JSON or fallback Markdown
-
-nimbus/retrieval.py
-  retrieval scoring, follow-up focus, reranking helpers, context formatting
-
-nimbus/source_store.py
-  SQLite Source Document storage, migrations, full-document access, lexical fallback search
-
-nimbus/source_chunks.py
-  semantic Source Base chunk indexing into the Qdrant source chunk collection
-
-nimbus/vector_store.py
-  Qdrant collection storage, vector collection management, semantic search
-
-nimbus/rag.py
-  Thin facade that wires Source Base, Knowledge Base, LLM, builder, and answer engine
-
-nimbus/prompts.py
-  Project prompting policy and templates for Knowledge Base building, image extraction,
-  query rewrite, answer generation, and reranking
-
-static/index.html
-  UI structure
-
-static/app.js
-  browser logic, uploads, persistent chats, source/knowledge views, Markdown rendering
-
-static/styles.css
-  dark professional UI styling
-
-data/rag.sqlite
-  persistent document metadata and full extracted source text
-
-data/chats.sqlite
-  persistent chat sessions and message history
-
-storage/
-  legacy local Qdrant storage path; Docker Qdrant normally uses its named volume
+Question + chat memory
+  -> query rewrite
+  -> query expansion
+  -> search Knowledge Base
+  -> search Source chunks
+  -> merge candidates
+  -> optional LLM rerank
+  -> final grounded answer
 ```
 
-## Run
+Retrieval scoring combines:
 
-Create `.env` from `.env.example`, install Python dependencies, start your
-configured LM Studio chat and embedding models, then run both services:
+- Qdrant vector similarity
+- Lexical overlap scoring
+- Exact match bonus
+- Optional LLM reranking
 
-```powershell
-python -m pip install -r requirements.txt
-```
+The final answer prompt can reason from solid evidence. If a result can be
+derived by calculation, comparison, estimation, or conservative assumptions, the
+model is instructed to answer clearly and label inference separately from direct
+source facts.
 
-```powershell
-.\scripts\nimbusctl.ps1 start
-```
+## Agentic Pipeline
 
-Cross-platform:
-
-```bash
-python scripts/nimbusctl.py start
-```
-
-Open:
+Agentic mode uses this flow:
 
 ```text
-http://localhost:8000
+Question + chat memory
+  -> LLM chooses next JSON tool action
+  -> backend validates tool name and arguments
+  -> AgentToolbox executes read-only tool
+  -> observation is stored
+  -> sources are collected
+  -> repeat until final or step limit
+  -> final grounded answer from observations and evidence
 ```
 
-Qdrant dashboard:
+The agent is modular. New tools can be added by registering an `AgentTool` in
+`nimbus/tools.py` without rewriting the agent loop.
 
-```text
-http://localhost:6333/dashboard
-```
+## Configuration Reference
 
-## Configuration
+Private runtime settings live in `.env`, which is ignored by git. Public default
+keys live in `.env.example`.
 
-Private runtime settings live in `.env`, which is ignored by git. Use
-`.env.example` as the template.
-
-```text
+```env
 OPENAI_BASE_URL=http://127.0.0.1:1234/v1
 OPENAI_MODEL=<chat-model-name>
 IMAGE_MODEL=<image-capable-chat-model-name>
 EMBEDDING_MODEL=<embedding-model-name>
 OPENAI_API_KEY=local-key
-PORT=8000
-HOST=127.0.0.1
-RAG_DB=./data/rag.sqlite
-KNOWLEDGE_GROUP_CHUNKS=30
-KNOWLEDGE_MAX_TOKENS=12000
-KNOWLEDGE_CONCURRENCY=1
-SOURCE_CHUNK_MAX_WORDS=650
-EXTRACTION_WORKERS=12
-CHAT_MEMORY_TURNS=24
-CHAT_MEMORY_SUMMARY_CHARS=700
-CHAT_MEMORY_MESSAGE_CHARS=4000
-AGENT_MAX_STEPS=6
+
 VECTOR_BACKEND=qdrant
 QDRANT_URL=http://127.0.0.1:6333
 QDRANT_PORT=6333
@@ -638,26 +374,194 @@ QDRANT_RUNTIME=docker
 QDRANT_CONTAINER_NAME=nimbus-qdrant
 QDRANT_DOCKER_IMAGE=qdrant/qdrant:latest
 QDRANT_DOCKER_VOLUME=nimbus_qdrant_storage
+
+PORT=8000
+HOST=127.0.0.1
+RAG_DB=./data/rag.sqlite
+
+KNOWLEDGE_GROUP_CHUNKS=30
+KNOWLEDGE_MAX_TOKENS=12000
+KNOWLEDGE_CONCURRENCY=1
+SOURCE_CHUNK_MAX_WORDS=650
+EXTRACTION_WORKERS=12
+
+CHAT_MEMORY_TURNS=24
+CHAT_MEMORY_SUMMARY_CHARS=700
+CHAT_MEMORY_MESSAGE_CHARS=4000
+RAG_RERANK=1
+AGENT_MAX_STEPS=6
 ```
 
-Environment variables override `.env` values if they are already set before
-starting the app.
+Environment variables already set in the shell override values loaded from
+`.env`.
 
-## Strengths
+## API Reference
 
-- Runs locally.
-- Uses the LM Studio OpenAI-compatible endpoint.
-- Supports text, PDF, CSV/log/article-style text, and images.
-- Separates raw evidence from LLM-built Knowledge Base entries.
-- Uses the configured semantic embedding model.
-- Uses LLM query rewriting before retrieval.
-- Uses concurrent CPU-side PDF extraction.
-- Uses serialized LLM jobs by default for local-model stability.
-- Lets you inspect databases, documents, chunks, answers, and sources.
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/health` | Runtime health and model/vector status |
+| `GET` | `/api/settings` | Current runtime settings |
+| `POST` | `/api/settings` | Update runtime settings for the current process |
+| `GET` | `/api/connections` | Check local LLM and Qdrant connectivity |
+| `GET` | `/api/chats` | List chats |
+| `POST` | `/api/chats` | Create chat |
+| `GET` | `/api/chats/{id}/messages` | Load chat messages |
+| `PATCH` | `/api/chats/{id}` | Rename chat |
+| `DELETE` | `/api/chats/{id}` | Delete chat |
+| `POST` | `/api/chats/{id}/rename` | Rename chat fallback route |
+| `POST` | `/api/chats/{id}/delete` | Delete chat fallback route |
+| `GET` | `/api/documents` | List Source Documents |
+| `POST` | `/api/documents` | Queue document ingestion |
+| `GET` | `/api/documents/{id}/chunks` | Return full Source Document text for the reader |
+| `DELETE` | `/api/documents/{id}` | Delete Source Document and related vector entries |
+| `POST` | `/api/documents/{id}/build-knowledge` | Queue Knowledge Base build for one document |
+| `GET` | `/api/knowledge` | List Knowledge Base entries |
+| `GET` | `/api/search` | Search Knowledge Base entries |
+| `GET` | `/api/jobs` | List background jobs |
+| `POST` | `/api/ask` | Fast RAG chat answer |
+| `POST` | `/api/agent/ask` | Agentic chat answer |
+| `POST` | `/api/rebuild-knowledge` | Rebuild Source chunk and Knowledge Base indexes |
 
-## Limitations
+## Project Structure
+
+```text
+app.py
+nimbus/
+  agent.py              Agentic planning and answer loop
+  answer_engine.py      Fast RAG answer engine
+  application.py        App orchestration, settings, jobs, chats
+  chat_memory.py        Rolling chat memory and focus context
+  chat_store.py         Persistent chat SQLite store
+  config.py             .env loading helpers
+  extraction.py         Text, PDF, image input extraction
+  jobs.py               In-memory background job queue
+  knowledge.py          Knowledge Base builder
+  knowledge_parser.py   LLM JSON parsing and fallback parsing
+  llm.py                OpenAI-compatible chat and embedding client
+  models.py             Shared data models
+  prompts.py            Prompt policy and all prompt templates
+  rag.py                RAG facade wiring stores, LLM, builder, answer engine
+  retrieval.py          Retrieval scoring, focus, rerank helpers
+  source_chunks.py      Semantic source chunk indexing
+  source_store.py       SQLite Source Document store
+  text_processing.py    Normalization and semantic chunking
+  tools.py              Agent tool registry
+  vector_store.py       Qdrant storage and search
+static/
+  index.html
+  app.js
+  styles.css
+scripts/
+  nimbusctl.ps1
+  nimbusctl.py
+  start_all.ps1
+  stop_all.ps1
+  restart_all.ps1
+  status.ps1
+docs/
+  system-architecture.svg
+  data-retrieval-flow.svg
+  agentic-flow.svg
+```
+
+## Prompting Policy
+
+Nimbus keeps all prompt templates in `nimbus/prompts.py`. The project policy is:
+
+- Keep prompts general-purpose.
+- Do not add hard-coded fixes for specific examples, products, hardware,
+  numbers, files, or user questions.
+- Improve the technical path when behavior needs improvement: retrieval, query
+  rewrite, reranking, context selection, memory, tool use, or prompt structure.
+- Separate direct evidence from inference in final answers.
+- Cite only sources that are actually used.
+
+## Runtime Data And Git Safety
+
+The repository ignores private and generated runtime data:
+
+```text
+.env
+.env.local
+.conda/
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+storage/
+snapshots/
+qdrant/
+```
+
+Do not commit `.env`, SQLite databases, Qdrant volumes, model files, or local
+runtime logs.
+
+## Troubleshooting
+
+### Nimbus port 8000 is already in use
+
+Use the controller restart command. It is designed to stop stale Nimbus
+processes and clean up the managed runtime PID:
+
+```powershell
+.\scripts\nimbusctl.ps1 restart
+```
+
+### Qdrant did not become ready
+
+Make sure Docker Desktop is running, then start Qdrant:
+
+```powershell
+.\scripts\nimbusctl.ps1 start-qdrant
+```
+
+Check the dashboard:
+
+```text
+http://localhost:6333/dashboard
+```
+
+### The model endpoint is unavailable
+
+Start your local OpenAI-compatible server and verify `.env`:
+
+```env
+OPENAI_BASE_URL=http://127.0.0.1:1234/v1
+OPENAI_MODEL=<chat-model-name>
+EMBEDDING_MODEL=<embedding-model-name>
+```
+
+Then use the Settings panel in the UI or:
+
+```powershell
+.\scripts\nimbusctl.ps1 restart
+```
+
+### Existing vectors do not match the embedding model
+
+Qdrant collections are tied to vector dimensions. If you change
+`EMBEDDING_MODEL`, use new collection names or recreate the collections:
+
+```env
+QDRANT_COLLECTION=nimbus_knowledge_base_new
+QDRANT_SOURCE_COLLECTION=nimbus_source_chunks_new
+```
+
+Then rebuild the Knowledge Base from the UI or with:
+
+```text
+POST /api/rebuild-knowledge
+```
+
+## Current Limitations
 
 - Qdrant must be running for semantic retrieval.
-- PDF image-only/scanned pages are not yet rendered page-by-page into vision text.
-- Markdown rendering is intentionally minimal and safe.
-- Jobs are in-memory, so progress history resets when Nimbus restarts.
+- Image-only PDF pages are not rendered page-by-page into vision extraction.
+- Background job history is in memory and resets when Nimbus restarts.
+- Agent tools are currently read-only. Write, delete, rebuild, or system-control
+  agent tools should require explicit confirmation before being added.
+
+## License
+
+No license file is included yet. Add one before distributing or accepting
+external contributions.
